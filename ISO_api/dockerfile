@@ -1,0 +1,14 @@
+FROM continuumio/miniconda3 
+
+WORKDIR /app
+
+RUN conda create -n myenv python=3.10
+
+COPY . /app
+
+RUN conda run -n myenv pip install --no-cache-dir -r /app/requirements.txt
+RUN conda run -n myenv conda install -c conda-forge pythonocc-core -y
+
+EXPOSE 8888
+
+CMD ["conda", "run", "--no-capture-output", "-n", "myenv", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -1,0 +1,13 @@
+LOG START
+17:56:49 : UploadFile start : O0000
+17:56:51 : UploadFile start : O0000
+17:56:51 : UploadFile start : O0001
+17:56:53 : UploadFile start : O0001
+17:56:53 : UploadFile start : O0002
+17:56:55 : UploadFile start : O0002
+17:56:55 : UploadFile start : O0003
+17:56:57 : UploadFile start : O0003
+17:56:57 : UploadFile start : O0004
+17:56:59 : UploadFile start : O0004
+17:56:59 : UPLOAD COMPLETE
+17:56:59 : BACKGROUND WORKER RUN

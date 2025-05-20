@@ -1,0 +1,15 @@
+services:
+
+  manager:
+    build: ./src
+    volumes:
+      - ./src:/src
+    container_name: manager
+    depends_on:
+      - machine
+    networks:
+      - kitech_network
+
+networks:
+  kitech_network:
+    external: true

@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  dll-server:
+    build:
+      context: ./CS_WrapAPI
+    container_name: dll_server
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./CS_WrapAPI:/dll/
+    networks:
+      - kitech_network
+
+  mongo:
+    image: mongo:latest
+    container_name: mongo_container
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${DATABASE_NAME}
+    networks:
+      - kitech_network
+
+  iso-api:
+    build:
+      context: ./ISO_api
+    container_name: iso_api
+    depends_on:
+      - mongo
+    volumes:
+      - ./data:/data
+      - ./ISO_api:/app
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: 1
+      DLL_URI: ${DLL_URI}
+    networks:
+      - kitech_network
+
+volumes:
+  mongo_data:
+
+networks:
+  kitech_network:
+    external: true
+    name: kitech_network
