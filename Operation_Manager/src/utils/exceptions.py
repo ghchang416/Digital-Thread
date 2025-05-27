@@ -20,6 +20,7 @@ class ExceptionEnum(Enum):
     WORKPLAN_EXIST = ("Already Workplan Exist", 400)
     
     # 500 INTERNAL SERVER ERROR
+    EXTERNAL_REQUEST_ERROR = ("Torus Application 연결 실패", 500)
     PROJECT_UPLOAD_FAILED = ("Project file upload failed.", 500)
     PROJECT_CREATION_FAILED = ("Project creation failed", 500)
     PROJECT_DELETE_FAILED = ("Project deletion failed", 500)

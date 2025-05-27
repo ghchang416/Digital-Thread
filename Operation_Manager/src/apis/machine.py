@@ -1,16 +1,26 @@
 from fastapi import APIRouter, Depends
+from src.schemas.machine import MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse
+from src.services import MachineService, get_file_service
 
-router = APIRouter(prefix="/api/machines", tags=["Project Management"])
+router = APIRouter(prefix="/api/machines", tags=["Machine Management"])
 
-@router.get("/", status_code=201, response_model=ProjectListResponse, summary="프로젝트 리스트 호출")
-async def upload_project(
-    
+@router.get("/", response_model=MachineListResponse)
+async def get_machines(
+    macine_service: MachineService = Depends()
 ):
-    """
-    프로젝트 XML 파일을 업로드하는 API입니다.
+    return await macine_service.get_machine_list()
 
-    - 업로드된 XML 파일을 파싱하여 프로젝트를 생성합니다.
-    - 프로젝트는 데이터베이스에 저장됩니다.
-    - **반환값**: 생성된 프로젝트의 정보
-    """
-    return
+@router.post("/{machine_id}/send_nc", response_model=MachineFileUploadResponse)
+async def upload_file_to_machine(
+    machine_id: int, 
+    file_id: str, 
+    service: MachineService = Depends()
+):
+    return await service.upload_torus_file(machine_id, file_id)
+
+@router.get("/machine/{machine_id}/status", response_model=MachineProgramStatusResponse)
+async def get_machine_status(
+    machine_id: int, 
+    macine_service: MachineService = Depends()
+):
+    return await macine_service.get_machine_status(machine_id)
