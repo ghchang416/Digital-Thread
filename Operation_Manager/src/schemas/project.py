@@ -21,3 +21,16 @@ class ProjectListResponse(BaseModel):
     page: int = Field(..., ge=1)
     limit: int = Field(..., ge=1)
     total: int = Field(..., ge=0)
+    
+class WorkplanNC(BaseModel):
+    workplan_id: str
+    nc_code_id: str
+
+class WorkplanNCResponse(BaseModel):
+    results: List[WorkplanNC]
+
+class NcCodeUpdateRequest(BaseModel):
+    content: str
+    
+class NCCodeResponse(BaseModel):
+    content: str

@@ -21,3 +21,13 @@ class ProjectRepository:
         items = await cursor.to_list(length=request.limit)
 
         return items
+
+    async def get_project_by_id(self, project_id: str):
+        return await self.project_collection.find_one({"_id": ObjectId(project_id)})
+    
+    async def update_project_data(self, project_id: str, updated_data: str):
+        result = await self.project_collection.update_one(
+            {"_id": ObjectId(project_id)},
+            {"$set": {"data": updated_data}}
+        )
+        return result.modified_count > 0
