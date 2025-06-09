@@ -1,3 +1,5 @@
+import io
+import chardet
 from io import BytesIO
 import xmltodict
 import xml.etree.ElementTree as ET
@@ -7,6 +9,8 @@ from src.utils.exceptions import CustomException, ExceptionEnum
 from src.schemas.project import ProjectOut, ProjectSearchFilter, WorkplanNCResponse, WorkplanNC, NCCodeResponse
 from src.entities.file import FileRepository
 from src.entities.project import ProjectRepository
+from src.entities.model import Project
+from src.utils.xml_parser import create_feature_xml, ensure_empty_lists, update_xml_from_dataclass, parser, remove_empty_lists, serializer
 import xml.dom.minidom
 
 class ProjectService:
@@ -33,7 +37,7 @@ class ProjectService:
         project = await self.project_repository.get_project_by_id(project_id)
         xml_string = project.get("data", "")
         try:
-            data = xmltodict.parse(xml_string)
+            data = self._xml_to_dict(xml_string)
             main_workplan = data["project"].get("main_workplan")
             results = []
 
@@ -41,7 +45,7 @@ class ProjectService:
             if main_workplan.get("its_id"):
                 results.append(WorkplanNC(
                     workplan_id=main_workplan["its_id"],
-                    nc_code_id=self._extract_nc_list(main_workplan)
+                    nc_code_id=self._extract_nc_id(main_workplan)
                 ))
 
             # Case 2: its_elements 안에 포함된 workplan들
@@ -57,12 +61,13 @@ class ProjectService:
                     ):
                         results.append(WorkplanNC(
                             workplan_id=main_workplan["its_id"],
-                            nc_code_id=self._extract_nc_list(element)
+                            nc_code_id=self._extract_nc_id(element)
                         ))
             return WorkplanNCResponse(results=results)
         except Exception as e:
             raise CustomException(ExceptionEnum.INVALID_XML_FORMAT, str(e))
         
+
 
     async def get_nc_code(self, project_id: str, workplan_id: str, nc_code_id: str) -> NCCodeResponse:
         """
@@ -74,19 +79,24 @@ class ProjectService:
             raise CustomException(ExceptionEnum.PROJECT_NOT_FOUND)
 
         xml_string = project.get("data", "")
-        if not self._verify_nc_code_in_workplan(xml_string, workplan_id, nc_code_id):
+        data = self._xml_to_dict(xml_string)
+        if not self._verify_nc_code_in_workplan(data, workplan_id, nc_code_id):
             raise CustomException(ExceptionEnum.NO_DATA_FOUND)
-
-        # GridFS에서 파일 가져오기
         try:
             byte_io = await self.file_repository.get_file_byteio(nc_code_id)
-            content = byte_io.read().decode("utf-8")  # 👉 텍스트로 변환
+            byte_io.seek(0)
+            content_bytes = byte_io.read()
+
+            encoding = chardet.detect(content_bytes)["encoding"] or "utf-8"
+            content = content_bytes.decode(encoding)
+
             return NCCodeResponse(content=content)
-        except Exception:
+
+        except Exception as e:
             raise CustomException(ExceptionEnum.NO_DATA_FOUND)
 
-    async def update_nc_code(
-        self, project_id: str, workplan_id: str, nc_code_id: str, new_nc_file: BytesIO) -> dict:
+
+    async def update_nc_code(self, project_id: str, workplan_id: str, nc_code_id: str, new_nc_content: str) -> dict:
         """
         기존 NC 코드를 삭제하고 새 파일로 업데이트하며 XML의 its_id도 갱신
         """
@@ -99,63 +109,67 @@ class ProjectService:
         if not xml_string:
             raise CustomException(ExceptionEnum.INVALID_XML_FORMAT)
 
+        # 기존 NC 파일 삭제
         await self.file_repository.delete_file_by_id(nc_code_id)
 
-        # 새 NC 파일 업로드
-        new_file_id = await self.file_repository.insert_file(new_nc_file.read(), f"{nc_code_id}.nc")
+        # 새 NC 파일 업로드 (문자열 → BytesIO로 인코딩)
+        new_file_io = io.BytesIO(new_nc_content.encode("utf-8"))
+        new_file_id = await self.file_repository.insert_file(new_file_io, f"{nc_code_id}.nc")
 
         # XML 내 해당 workplan의 nc_code its_id 갱신
         try:
-            data_dict = xmltodict.parse(xml_string)
-            updated = self._update_nc_code_id_in_workplan(data_dict, workplan_id, new_file_id)
+            data_dict = self._xml_to_dict(xml_string)
+            updated = self._update_nc_code_id_in_workplan(data_dict, workplan_id, new_file_id, nc_code_id)
             if not updated:
                 raise CustomException(ExceptionEnum.INVALID_XML_FORMAT)
 
-            new_xml_string = xmltodict.unparse(data_dict, pretty=True)
-
+            new_xml_string = self._save_xml_data(data_dict)
         except Exception:
             raise CustomException(ExceptionEnum.INVALID_XML_FORMAT)
 
-        # MongoDB 업데이트
+        # MongoDB에 XML 갱신
         await self.project_repository.update_project_data(project_id, new_xml_string)
 
         return
+
     
-    def _verify_nc_code_in_workplan(self, xml_string: str, workplan_id: str, nc_code_id: str) -> bool:
+    def _verify_nc_code_in_workplan(self, data_dict: str, workplan_id: str, nc_code_id: str) -> bool:
         """
         해당 workplan 내에 주어진 nc_code_id가 존재하는지 확인
         """
-        try:
-            data_dict = xmltodict.parse(xml_string)
-            main_workplan = data_dict['project'].get("main_workplan")
-            if not main_workplan:
-                return False
+        main_workplan = data_dict['project'].get("main_workplan")
+        if not main_workplan:
+            return False
 
-            elements = main_workplan.get("its_elements", [])
-            if not isinstance(elements, list):
-                elements = [elements]
+        elements = main_workplan.get("its_elements", [])
+        if not isinstance(elements, list):
+            elements = [elements]
 
-            for element in elements:
-                if element.get("@xsi:type") == "workplan" and element.get("its_id") == workplan_id:
-                    nc_codes = element.get("nc_code", [])
-                    if isinstance(nc_codes, dict):
-                        nc_codes = [nc_codes]
-                    return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
-
-            # case: main_workplan 자체가 해당 workplan일 경우
-            if main_workplan.get("its_id") == workplan_id:
-                nc_codes = main_workplan.get("nc_code", [])
+        print(elements)
+        for element in elements:
+            if element.get("@xsi:type") == "workplan" and element.get("its_id") == workplan_id:
+                nc_codes = element.get("nc_code", [])
                 if isinstance(nc_codes, dict):
                     nc_codes = [nc_codes]
                 return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
 
-            return False
-        except Exception:
-            return False
+        # case: main_workplan 자체가 해당 workplan일 경우
+        if main_workplan.get("its_id") == workplan_id:
+            nc_codes = main_workplan.get("nc_code", [])
+            if isinstance(nc_codes, dict):
+                nc_codes = [nc_codes]
+            return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
 
-    def _update_nc_code_id_in_workplan(self, data: dict, workplan_id: str, new_nc_code_id: str) -> bool:
+
+    def _update_nc_code_id_in_workplan(
+        self,
+        data: dict,
+        workplan_id: str,
+        new_nc_code_id: str,
+        prev_nc_code_id: str
+    ) -> bool:
         """
-        XML dict 구조에서 해당 workplan의 nc_code 리스트에 새로운 its_id를 append
+        XML dict 구조에서 해당 workplan의 nc_code 리스트에서 prev_nc_code_id 제거 후 new_nc_code_id 추가
         """
         main_workplan = data['project'].get("main_workplan")
         if not main_workplan:
@@ -165,36 +179,65 @@ class ProjectService:
         if not isinstance(elements, list):
             elements = [elements]
 
-        for element in elements:
-            if element.get("@xsi:type") == "workplan" and element.get("its_id") == workplan_id:
-                if not element.get("nc_code"):
-                    element["nc_code"] = []
-                elif isinstance(element["nc_code"], dict):
-                    element["nc_code"] = [element["nc_code"]]
+        def update_nc_code_list(target: dict) -> bool:
+            nc_code = target.get("nc_code")
 
-                element["nc_code"].append({"its_id": new_nc_code_id})
-                return True
+            # dict → list로 변환
+            if nc_code and isinstance(nc_code, dict):
+                nc_code = [nc_code]
+            elif not nc_code:
+                nc_code = []
 
-        if main_workplan.get("its_id") == workplan_id:
-            if not main_workplan.get("nc_code"):
-                main_workplan["nc_code"] = []
-            elif isinstance(main_workplan["nc_code"], dict):
-                main_workplan["nc_code"] = [main_workplan["nc_code"]]
+            # 기존 ID 제거
+            nc_code = [item for item in nc_code if item.get("its_id") != prev_nc_code_id]
 
-            main_workplan["nc_code"].append({"its_id": new_nc_code_id})
+            # 새 ID 추가
+            nc_code.append({"its_id": new_nc_code_id})
+            target["nc_code"] = nc_code
             return True
 
+        for element in elements:
+            if element.get("@xsi:type") == "workplan" and element.get("its_id") == workplan_id:
+                return update_nc_code_list(element)
+
+        if main_workplan.get("its_id") == workplan_id:
+            return update_nc_code_list(main_workplan)
+
         return False
+
         
     def _extract_its_id(self, xml_string: str) -> str:
+        data = self._xml_to_dict(xml_string)
         try:
-            root = ET.fromstring(xml_string)
-            return root.attrib.get("its_id", "unknown")
-        except Exception:
-            raise CustomException(ExceptionEnum.INVALID_XML_FORMAT)
+            return data["project"]["its_id"]
+        except (KeyError, TypeError):
+            return "unknown"
 
-    def _extract_nc_list(self, workplan: dict) -> List[str]:
-        nc = workplan.get("nc_code", [])
-        if isinstance(nc, dict):
-            nc = [nc]
-        return [item.get("its_id") for item in nc if isinstance(item, dict)]
+
+    def _extract_nc_id(self, workplan: dict) -> str:
+        nc_code = workplan.get("nc_code", {})
+        if isinstance(nc_code, dict):
+            return nc_code.get("its_id", "unknown")
+        return None
+    
+    def _xml_to_dict(self, project_xml: str):
+        project_dict = xmltodict.parse(project_xml)
+        return self._replace_none_with_empty_list(project_dict)
+
+    def _replace_none_with_empty_list(self, obj):
+        if isinstance(obj, dict):
+            return {k: self._replace_none_with_empty_list(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._replace_none_with_empty_list(item) for item in obj]
+        elif obj is None:
+            return []
+        else:
+            return obj
+
+    
+    def _save_xml_data(self, data: dict):
+        data = xmltodict.unparse(data, pretty=True)
+        data_class = parser.from_string(data, Project)
+        xml_string = update_xml_from_dataclass(data, data_class)
+        pretty_xml = xml.dom.minidom.parseString(xml_string).toprettyxml(indent="\t")
+        return pretty_xml

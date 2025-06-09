@@ -4,7 +4,6 @@ from typing import List
 class MachineInfo(BaseModel):
     id: int
     name: str
-    venderCode: str
     ip_address: str
     toolSystem: float
 

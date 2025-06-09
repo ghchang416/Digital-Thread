@@ -9,12 +9,8 @@ class ProjectSearchFilter(BaseModel):
     
     
 class ProjectOut(BaseModel):
-    id: str = Field(..., alias="_id")
+    id: str = Field(...)
     name: str
-
-    class Config:
-        allow_population_by_field_name = True  # _id → id 변환 허용
-        arbitrary_types_allowed = True         # Any 필드 타입 허용
 
 class ProjectListResponse(BaseModel):
     projects: List[ProjectOut]
@@ -24,7 +20,7 @@ class ProjectListResponse(BaseModel):
     
 class WorkplanNC(BaseModel):
     workplan_id: str
-    nc_code_id: str
+    nc_code_id: Optional[str]
 
 class WorkplanNCResponse(BaseModel):
     results: List[WorkplanNC]

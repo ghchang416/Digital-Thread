@@ -2,6 +2,8 @@
 .pytest_cache
 __pycache__
 
+.venv
+
 # torus 아직 미완성
 Projects/
 torus_dll/
