@@ -13,7 +13,7 @@ machine_job_status = {
 }
 
 class MachineService:
-    gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://localhost:5001")
+    gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://host.docker.internal:5000")
     
     def __init__(self, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.repository = FileRepository(grid_fs)
@@ -59,7 +59,7 @@ class MachineService:
         try:
             byte_io, filename = await self.repository.get_file_byteio_and_name(file_id)
             file_data = byte_io.read()  # raw bytes로 강제 변환
-            ncpath = f"C:\\Users\\Gyeonghyun\\Documents\\TENUX\\TENUX_Emulator\\Projects\\MC_5axis_1ch\\Nc\\{filename}"  # ex: /O0001.nc
+            ncpath = await self._get_nc_root_path(machine_id)
 
             files = {
                 "file": (filename, file_data, "application/octet-stream")

@@ -44,6 +44,21 @@ services:
     networks:
       - kitech_network
 
+  om:
+    build:
+      context: ./Operation_Manager
+    container_name: operation_manager
+    volumes:
+      - ./Operation_Manager:/app
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: 1
+    networks:
+      - kitech_network
+    extra_hosts:
+      - "host.docker.internal:10.170.27.45"
+
 volumes:
   mongo_data:
 
