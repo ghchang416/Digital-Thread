@@ -19,5 +19,8 @@ async def get_db() -> AsyncIOMotorDatabase:
 async def get_project_collection(db: AsyncIOMotorDatabase = Depends(get_db)):
     return db["projects"]
 
+async def get_product_log_collection(db: AsyncIOMotorDatabase = Depends(get_db)):
+    return db["product_logs"]
+
 async def get_grid_fs(db: AsyncIOMotorDatabase = Depends(get_db)):
     return AsyncIOMotorGridFSBucket(db, bucket_name="files")

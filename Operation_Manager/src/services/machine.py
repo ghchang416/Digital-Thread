@@ -1,11 +1,10 @@
 import asyncio
-from io import BytesIO
-import io
+from datetime import datetime
 import os
 import uuid
 import httpx
 from fastapi import BackgroundTasks
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorCollection
 from src.schemas.machine import MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse
 from src.entities.file import FileRepository
 from src.utils.exceptions import CustomException, ExceptionEnum
@@ -16,8 +15,30 @@ machine_job_status = {
 class MachineService:
     gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://localhost:5001")
     
-    def __init__(self, grid_fs: AsyncIOMotorGridFSBucket):
+    def __init__(self, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.repository = FileRepository(grid_fs)
+        self.nc_root_paths = {}
+        self.product_log_collection = product_log_collection
+
+    async def _get_nc_root_path(self, machine_id: int) -> str:
+        if machine_id in self.nc_root_paths:
+            return self.nc_root_paths[machine_id]
+        
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.get(
+                    f"{self.gateway_base_url}/data/machine/ncMemory/rootPath",
+                    params={"machine": machine_id}
+                )
+                response.raise_for_status()
+                data = response.json()
+                root_path = data.get("value", "")
+                if not root_path:
+                    raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
+                self.nc_root_paths[machine_id] = root_path
+                return root_path
+        except Exception:
+            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
     
     async def get_machine_list(self) -> MachineListResponse:
         """
@@ -116,31 +137,72 @@ class MachineService:
         
     async def _monitor_machine_state(self, project_id: str, machine_id: int):
         mode = 0
-        pname = ""
-        uuid_index = 0
-
+        current_tool = None
+        operation_index = 1
         product_uuid = str(uuid.uuid4())
-        recipe_uuid = ""
+
+        log_doc = {
+            "project_id": project_id,
+            "machine_id": machine_id,
+            "product_uuid": product_uuid,
+            "start_time": datetime.now(),
+            "finish_time": None,
+            "finished": False,
+            "operations": []
+        }
 
         while True:
-            status: MachineProgramStatusResponse = await self.get_machine_status(machine_id=machine_id)
+            status = await self.get_machine_status(machine_id)
 
             if status.programMode == 1 and mode != 3:
                 mode = 3
-                self._add_product(project_id, product_uuid, uuid_index)
-                uuid_index += 1
+                current_tool = await self._get_active_tool_number(machine_id)
+                await self._log_product_operation(log_doc, operation_index, current_tool, "start")
 
-            # if current_program != pname and mode == 3:
-            #     recipe_uuid = str(uuid.uuid4())
-            #     add_product(project_id, recipe_uuid, upload_data, uuid_index)
-            #     uuid_index += 1
-            #     pname = current_program
+            elif status.programMode == 1 and mode == 3:
+                tool = await self._get_active_tool_number(machine_id)
+                if tool != current_tool:
+                    await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                    operation_index += 1
+                    await self._log_product_operation(log_doc, operation_index, tool, "start")
+                    current_tool = tool
 
-            if status.programMode != 1 and mode == 3:
+            elif status.programMode != 1 and mode == 3:
+                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                log_doc["finish_time"] = datetime.now()
+                log_doc["finished"] = True
+                await self.product_log_collection.insert_one(log_doc)
                 break
 
             await asyncio.sleep(1)
-        pass
+
+    async def _log_product_operation(self, log_doc: dict, index: int, tool_number: int, action: str):
+        if action == "start":
+            operation = {
+                "uuid": str(uuid.uuid4()),
+                "index": index,
+                "toolNumber": tool_number,
+                "start_time": datetime.now(),
+                "end_time": None
+            }
+            log_doc["operations"].append(operation)
+
+        elif action == "end":
+            for op in reversed(log_doc["operations"]):
+                if op["index"] == index and op["end_time"] is None:
+                    op["end_time"] = datetime.now()
+                    break
     
-    async def _add_product(self, project_id, product_uuid, uuid_index):
-        pass
+    async def _get_active_tool_number(self, machine_id: int, channel: int = 1) -> int:
+        try:
+            params = {"machine": machine_id, "channel": channel}
+            async with httpx.AsyncClient(verify=False) as client:
+                res = await client.get(
+                    f"{self.gateway_base_url}/data/machine/channel/activeTool/toolNumber",
+                    params=params
+                )
+                res.raise_for_status()
+                data = res.json()
+                return int(data.get("value", [0])[0])
+        except Exception:
+            return -1
