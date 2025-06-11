@@ -3,14 +3,12 @@ from datetime import datetime
 import os
 import uuid
 import httpx
+from src.services.redis import RedisJobTracker
 from fastapi import BackgroundTasks
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorCollection
 from src.schemas.machine import MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse
 from src.entities.file import FileRepository
 from src.utils.exceptions import CustomException, ExceptionEnum
-
-machine_job_status = {
-}
 
 class MachineService:
     gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://host.docker.internal:5000")
@@ -19,6 +17,8 @@ class MachineService:
         self.repository = FileRepository(grid_fs)
         self.nc_root_paths = {}
         self.product_log_collection = product_log_collection
+        self.redis_tracker = RedisJobTracker() 
+
 
     async def _get_nc_root_path(self, machine_id: int) -> str:
         if machine_id in self.nc_root_paths:
@@ -27,12 +27,12 @@ class MachineService:
         try:
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
-                    f"{self.gateway_base_url}/data/machine/ncMemory/rootPath",
+                    f"{self.gateway_base_url}/machine/ncMemory/rootPath",
                     params={"machine": machine_id}
                 )
                 response.raise_for_status()
                 data = response.json()
-                root_path = data.get("value", "")
+                root_path = data.get("value", "")[0]
                 if not root_path:
                     raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
                 self.nc_root_paths[machine_id] = root_path
@@ -58,7 +58,7 @@ class MachineService:
     async def upload_torus_file(self, project_id: str, machine_id: int, file_id: str, background_tasks: BackgroundTasks) -> MachineFileUploadResponse:
         try:
             byte_io, filename = await self.repository.get_file_byteio_and_name(file_id)
-            file_data = byte_io.read()  # raw bytes로 강제 변환
+            file_data = byte_io.read()
             ncpath = await self._get_nc_root_path(machine_id)
 
             files = {
@@ -68,10 +68,13 @@ class MachineService:
                 "machine": machine_id,
                 "ncpath": ncpath
             }
-            if machine_id not in machine_job_status:
-                machine_job_status[machine_id] = {}
-            machine_job_status[machine_id][filename] = "가공 대기"
-            
+
+            self.redis_tracker.redis_client.hset(f"status:{project_id}:{filename}", mapping={
+                "machine_id": str(machine_id),
+                "status": "가공 대기",
+                "upload_time": datetime.now().isoformat()
+            })
+            self.redis_tracker.enqueue_job(machine_id, filename, project_id)
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.put(
                     f"{self.gateway_base_url}/file/machine/ncpath",
@@ -80,15 +83,14 @@ class MachineService:
                 )
                 response.raise_for_status()
                 result = response.json()
-                # background_tasks.add_task(self._monitor_machine_state, project_id, machine_id)
+
                 return MachineFileUploadResponse(
                     status=result.get("status", -1),
                     filename=filename,
                     machine_id=machine_id,
                     ncpath=ncpath
                 )
-        except Exception as e:
-            print(e)
+        except Exception:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
     async def get_machine_status(self, machine_id: int):
@@ -120,21 +122,33 @@ class MachineService:
         except Exception:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
-    async def update_machine_job_status(self, machine_id: int):
-        # 현재 장비에서 실행 중인 프로그램명 조회
-        current_program_name = await self.get_current_program_name(machine_id)  # 예: "O0002.nc"
+    async def track_all_machines_forever(self):
+        while True:
+            machines = await self.get_machine_list()
+            for machine_id in [m.machine_id for m in machines.machines]:
+                asyncio.create_task(self._track_single_machine(machine_id))
+            await asyncio.sleep(10)
 
-        if machine_id not in machine_job_status:
-            return {}
+    async def _track_single_machine(self, machine_id: int):
+        while True:
+            status = await self.get_machine_status(machine_id)
+            if status.programMode == 3:
+                await self._process_machine_queue(machine_id)
+            await asyncio.sleep(3)
 
-        for fname, status in machine_job_status[machine_id].items():
-            if fname == current_program_name:
-                machine_job_status[machine_id][fname] = "가공 중"
-            elif status == "가공 중":
-                # 더 이상 실행 중이지 않으면 요청 대기로 전환
-                machine_job_status[machine_id][fname] = "요청 대기"
-        return machine_job_status[machine_id]
-        
+    async def _process_machine_queue(self, machine_id: int):
+        program_name = await self.get_current_program_name(machine_id)
+        queue_data = self.redis_tracker.peek_job(machine_id)
+        if not queue_data:
+            return
+
+        filename, project_id = queue_data
+        if program_name == filename:
+            self.redis_tracker.mark_processing(project_id, filename)
+        else:
+            self.redis_tracker.mark_finished(project_id, filename)
+            self.redis_tracker.pop_job(machine_id)
+
     async def _monitor_machine_state(self, project_id: str, machine_id: int):
         mode = 0
         current_tool = None
@@ -198,7 +212,7 @@ class MachineService:
             params = {"machine": machine_id, "channel": channel}
             async with httpx.AsyncClient(verify=False) as client:
                 res = await client.get(
-                    f"{self.gateway_base_url}/data/machine/channel/activeTool/toolNumber",
+                    f"{self.gateway_base_url}/machine/channel/activeTool/toolNumber",
                     params=params
                 )
                 res.raise_for_status()

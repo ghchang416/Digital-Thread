@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -21,6 +22,7 @@ class ProjectListResponse(BaseModel):
 class WorkplanNC(BaseModel):
     workplan_id: str
     nc_code_id: Optional[str]
+    filename: Optional[str]
 
 class WorkplanNCResponse(BaseModel):
     results: List[WorkplanNC]
@@ -30,3 +32,24 @@ class NcCodeUpdateRequest(BaseModel):
     
 class NCCodeResponse(BaseModel):
     content: str
+    
+class Operation(BaseModel):
+    uuid: str
+    index: int
+    toolNumber: int
+    start_time: datetime
+    end_time: Optional[datetime]
+
+
+class ProductLog(BaseModel):
+    project_id: str
+    machine_id: int
+    product_uuid: str
+    start_time: datetime
+    finish_time: Optional[datetime]
+    finished: bool
+    operations: List[Operation]
+
+
+class ProductLogResponse(BaseModel):
+    logs: List[ProductLog]

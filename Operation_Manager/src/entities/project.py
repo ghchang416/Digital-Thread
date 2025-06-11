@@ -17,7 +17,8 @@ class ProjectRepository:
             except Exception:
                 return []  # 잘못된 ID 형식
 
-        cursor = self.project_collection.find(query).skip(request.page-1).limit(request.limit)
+        skip_count = max((request.page - 1), 0) * request.limit
+        cursor = self.project_collection.find(query).skip(skip_count).limit(request.limit)
         items = await cursor.to_list(length=request.limit)
 
         return items

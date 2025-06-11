@@ -5,6 +5,8 @@ class MachineInfo(BaseModel):
     id: int
     name: str
     ip_address: str
+    vendorCode: str
+    connectCode: str
     toolSystem: float
 
 class MachineListResponse(BaseModel):

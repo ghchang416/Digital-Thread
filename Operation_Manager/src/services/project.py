@@ -3,20 +3,22 @@ import chardet
 from io import BytesIO
 import xmltodict
 import xml.etree.ElementTree as ET
-from typing import List, Dict
+from typing import List, Dict, Optional
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorGridFSBucket
 from src.utils.exceptions import CustomException, ExceptionEnum
-from src.schemas.project import ProjectOut, ProjectSearchFilter, WorkplanNCResponse, WorkplanNC, NCCodeResponse
+from src.schemas.project import ProductLog, ProductLogResponse, ProjectOut, ProjectSearchFilter, WorkplanNCResponse, WorkplanNC, NCCodeResponse
 from src.entities.file import FileRepository
+from src.services.redis import RedisJobTracker
 from src.entities.project import ProjectRepository
 from src.entities.model import Project
 from src.utils.xml_parser import create_feature_xml, ensure_empty_lists, update_xml_from_dataclass, parser, remove_empty_lists, serializer
 import xml.dom.minidom
 
 class ProjectService:
-    def __init__(self, collection: AsyncIOMotorCollection, grid_fs: AsyncIOMotorGridFSBucket):
+    def __init__(self, collection: AsyncIOMotorCollection, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.project_repository = ProjectRepository(collection)
         self.file_repository = FileRepository(grid_fs)
+        self.product_log_collection = product_log_collection  
     
     async def get_project_list(self, filter: ProjectSearchFilter):
         projects = await self.project_repository.get_project_list(filter)
@@ -43,12 +45,9 @@ class ProjectService:
 
             # Case 1: main_workplan 자체 처리
             if main_workplan.get("its_id"):
-                results.append(WorkplanNC(
-                    workplan_id=main_workplan["its_id"],
-                    nc_code_id=self._extract_nc_id(main_workplan)
-                ))
+                results.append(await self._build_workplan_nc(main_workplan))
 
-            # Case 2: its_elements 안에 포함된 workplan들
+            # Case 2: its_elements 내부 workplan 처리
             its_elements = main_workplan.get("its_elements")
             if its_elements:
                 if not isinstance(its_elements, list):
@@ -59,11 +58,10 @@ class ProjectService:
                         element.get("@xsi:type") == "workplan" and
                         element.get("its_id")
                     ):
-                        results.append(WorkplanNC(
-                            workplan_id=main_workplan["its_id"],
-                            nc_code_id=self._extract_nc_id(element)
-                        ))
+                        results.append(await self._build_workplan_nc(element))
+
             return WorkplanNCResponse(results=results)
+
         except Exception as e:
             raise CustomException(ExceptionEnum.INVALID_XML_FORMAT, str(e))
         
@@ -132,6 +130,48 @@ class ProjectService:
 
         return
 
+    async def get_product_logs_by_project_id(self, project_id: str) -> ProductLogResponse:
+        try:
+            logs_cursor = self.product_log_collection.find({"project_id": project_id})
+            logs = await logs_cursor.to_list(length=None)
+            return ProductLogResponse(
+                logs=[ProductLog(**log) for log in logs]
+            )
+        except Exception:
+            raise CustomException(ExceptionEnum.PROJECT_NOT_FOUND)
+
+    def get_machine_status_info(self, project_id: str):
+        redis_tracker = RedisJobTracker()
+        pattern = f"status:{project_id}:*"
+        keys = redis_tracker.redis_client.keys(pattern)
+
+        statuses = {}
+        for key in keys:
+            fname = key.split(":")[-1]
+            status = redis_tracker.redis_client.hget(key, "status") or "알 수 없음"
+            machine_id = redis_tracker.redis_client.hget(key, "machine_id") or "알 수 없음"
+
+            statuses[fname] = {
+                "status": status,
+                "machine_id": machine_id
+            }
+
+        return {"statuses": statuses}
+
+
+    async def _build_workplan_nc(self, element: dict) -> WorkplanNC:
+        nc_code_id = self._extract_nc_id(element)
+        filename: Optional[str] = None
+        try:
+            _, filename = await self.file_repository.get_file_byteio_and_name(nc_code_id)
+        except Exception:
+            pass
+
+        return WorkplanNC(
+            workplan_id=element["its_id"],
+            nc_code_id=nc_code_id,
+            filename=filename
+        )
     
     def _verify_nc_code_in_workplan(self, data_dict: str, workplan_id: str, nc_code_id: str) -> bool:
         """
@@ -234,7 +274,6 @@ class ProjectService:
         else:
             return obj
 
-    
     def _save_xml_data(self, data: dict):
         data = xmltodict.unparse(data, pretty=True)
         data_class = parser.from_string(data, Project)

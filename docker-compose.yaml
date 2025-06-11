@@ -51,13 +51,22 @@ services:
     volumes:
       - ./Operation_Manager:/app
     ports:
-      - "8000:8000"
+      - "8888:8000"
     environment:
       PYTHONUNBUFFERED: 1
     networks:
       - kitech_network
     extra_hosts:
       - "host.docker.internal:10.170.27.45"
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis_container
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - kitech_network
 
 volumes:
   mongo_data:
