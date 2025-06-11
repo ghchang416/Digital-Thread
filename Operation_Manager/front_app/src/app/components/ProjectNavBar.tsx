@@ -16,7 +16,7 @@ export default function ProjectNavBar({
   onPageChange,
 }: PaginationProps) {
   const totalPages = Math.ceil(totalCount / pageSize);
-  if (totalPages <= 1) return null;
+  // if (totalPages <= 1) return null;
 
   // 페이지 버튼 최대 5개만 중앙에 노출
   const getPageNumbers = () => {

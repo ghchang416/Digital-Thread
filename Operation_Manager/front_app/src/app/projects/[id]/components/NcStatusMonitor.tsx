@@ -3,12 +3,13 @@
 import { useEffect } from "react";
 
 type NcData = {
-  id: string;
-  workplan: string;
-  fileName: string;
-  status: string;
-  code: string;
+  workplan_id: string;
+  nc_code_id: string;
+  fileName?: string | null;
+  status?: string | null;
+  code?: string | null;
 };
+
 type Props = {
   ncList: NcData[];
   setNcList: (updater: (prev: NcData[]) => NcData[]) => void;
@@ -23,7 +24,7 @@ export default function NcStatusMonitor({ ncList, setNcList }: Props) {
 
       const updatedStatuses = await Promise.all(
         targets.map(async (nc) => {
-          const res = await fetch(`/api/nc/${nc.id}`);
+          const res = await fetch(`/api/nc/${nc.workplan_id}`);
           const data = await res.json(); // { id, status }
           return data;
         })
@@ -31,7 +32,7 @@ export default function NcStatusMonitor({ ncList, setNcList }: Props) {
 
       setNcList((prevList) =>
         prevList.map((nc) => {
-          const updated = updatedStatuses.find((u) => u.id === nc.id);
+          const updated = updatedStatuses.find((u) => u.id === nc.workplan_id);
           return updated ? { ...nc, status: updated.status } : nc;
         })
       );

@@ -31,7 +31,7 @@ export default function ProjectListItem({ id, name, onDetail }: ProjectListItemP
         <div className="text-[11px] text-gray-400">Project Name</div>
         <div className="font-semibold text-gray-800 text-sm">{name}</div>
       </div>
-      <DetailButton onClick={() => {router.push(`/projects/${id}`);}} small />
+      <DetailButton onClick={() => {router.push(`/projects/${id}?name=${encodeURIComponent(name)}`);}} small />
     </div>
   );
 }

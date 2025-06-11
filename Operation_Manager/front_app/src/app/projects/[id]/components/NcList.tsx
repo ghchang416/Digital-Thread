@@ -1,185 +1,179 @@
-"use client";
-
-import { useEffect , useState } from "react";
-import ActionButton from "./ActionButton"; // 저장/장비전송용 공통 버튼
+import { useEffect, useState } from "react";
+import ActionButton from "./ActionButton";
 import NcStatusMonitor from "./NcStatusMonitor";
 
 type NcData = {
-  id: string;
-  workplan: string;
-  fileName: string;
-  status: string;
-  code: string;
+  workplan_id: string;
+  nc_code_id: string;
+  fileName?: string | null;
+  status?: string | null;
+  code?: string | null;
 };
 
-
-type NcListProps = {
-  onSelectNc: (code: string) => void; // 선택된 NC 코드를 왼쪽에 반영하는 콜백
+export default function NcList({
+  projectId,
+  isDeviceSelected,
+  selectedNc,
+  selectedDeviceId,
+  setSelectedNc,
+  ncContent,
+  setNcContent,
+}: {
+  projectId: string;
   isDeviceSelected: boolean;
-};
-
-
-export default function NcList({ onSelectNc, isDeviceSelected }: NcListProps) {
+  selectedNc: NcData | null;
+  selectedDeviceId: string | null;
+  setSelectedNc: (nc: NcData | null) => void;
+  ncContent: string;
+  setNcContent: (content: string) => void;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   const [ncList, setNcList] = useState<NcData[]>([]);
-  const [checkedId, setCheckedId] = useState<string | null>(null);
+  const [loadingNc, setLoadingNc] = useState(false);
+  const [error, setError] = useState(false);
 
-  const showScroll = ncList.length > 4;
-
-  //API 호출 부분
-  useEffect(() => {
-    const fetchNcList = async () => {
-      const res = await fetch("/api/nc");
+  const fetchNcList = async (preserveSelected = false) => {
+    try {
+      setError(false);
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/workplans`);
+      if (!res.ok) throw new Error("API 요청 실패");
       const data = await res.json();
-      setNcList(data);
-    };
-    fetchNcList();
-  }, []);
-
-  useEffect(() => {
-    if (!isDeviceSelected) {
-      setCheckedId(null);
-      onSelectNc("");
+      if (Array.isArray(data.results)) {
+        setNcList(data.results);
+        if (preserveSelected && selectedNc) {
+          const match = data.results.find((nc: NcData) => nc.workplan_id === selectedNc.workplan_id);
+          setSelectedNc(match || null);
+        }
+      } else {
+        setNcList([]);
+      }
+    } catch (error) {
+      console.error("NC 리스트 가져오기 실패:", error);
+      setError(true);
+      setNcList([]);
     }
-  }, [isDeviceSelected]);
+  };
 
-  const selectedNc = ncList.find((n) => n.id === checkedId);
-  const isSendingDisabled = selectedNc?.status === "가공중";
+  const handleCheck = async (nc: NcData) => {
+    if (!isDeviceSelected) return;
 
-  // 저장 버튼 클릭
+    const isSame = selectedNc?.nc_code_id === nc.nc_code_id;
+    const nextNc = isSame ? null : nc;
+    setSelectedNc(nextNc);
+
+    if (!isSame && nc.workplan_id && nc.nc_code_id) {
+      setNcContent("로딩 중...");
+      try {
+        setLoadingNc(true);
+        const res = await fetch(
+          `${baseUrl}/api/projects/${projectId}/workplans/${nc.workplan_id}/nc/${nc.nc_code_id}`
+        );
+        const data = await res.json();
+        setNcContent(data.content || "");
+      } catch (e) {
+        alert("NC 코드 불러오기 실패");
+        setNcContent("");
+      } finally {
+        setLoadingNc(false);
+      }
+    } else {
+      setNcContent("");
+    }
+  };
+
   const handleSave = async () => {
     if (!selectedNc) return;
-
-    // 1. 서버에 저장 요청
-    await fetch("/api/save-nc", {
-      method: "POST",
-      body: JSON.stringify(selectedNc),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    // 2. 최신 상태 재조회
-    const res = await fetch(`/api/nc/${selectedNc.id}`);
-    const updated = await res.json();
-
-    // 3. 리스트 갱신
-    setNcList((prev) =>
-      prev.map((item) => (item.id === updated.id ? { ...item, status: updated.status } : item))
-    );
-
-    alert("파일이 서버에 저장되었습니다.");
+    const url = `${baseUrl}/api/projects/${projectId}/workplans/${selectedNc.workplan_id}/nc/${selectedNc.nc_code_id}`;
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: ncContent }),
+      });
+      if (!res.ok) throw new Error("저장 실패");
+      alert("파일이 서버에 저장되었습니다.");
+      await fetchNcList(true);
+    } catch (e) {
+      alert("저장 중 오류 발생");
+    }
   };
 
-  // 장비 전송 버튼 클릭
   const handleSend = async () => {
-    if (!selectedNc) return;
-
-    await fetch("/api/send-to-device", {
-      method: "POST",
-      body: JSON.stringify({ id: selectedNc.id, code: selectedNc.code }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    const res = await fetch(`/api/nc/${selectedNc.id}`);
-    const updated = await res.json();
-
-    setNcList((prev) =>
-      prev.map((item) => (item.id === updated.id ? { ...item, status: updated.status } : item))
-    );
-
-    alert("장비로 전송되었습니다.");
+    if (!selectedNc || !selectedDeviceId) return;
+    const url = `${baseUrl}/api/machines/${selectedDeviceId}/send_nc?project_id=${projectId}&nc_id=${selectedNc.nc_code_id}`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error("장비 전송 실패");
+      alert("장비로 전송되었습니다.");
+    } catch (error) {
+      console.error("장비 전송 실패:", error);
+      alert("장비 전송 중 오류가 발생했습니다.");
+    }
   };
 
-  
+  useEffect(() => {
+    fetchNcList();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!isDeviceSelected) setSelectedNc(null);
+  }, [isDeviceSelected]);
+
+  const showScroll = ncList.length > 4;
+  const containerClassName =
+    "space-y-1 pr-1" +
+    (showScroll ? " max-h-[190px] overflow-y-auto" : " max-h-none overflow-y-hidden") +
+    (loadingNc ? " opacity-50 pointer-events-none" : "");
 
   return (
     <div>
-
       <NcStatusMonitor ncList={ncList} setNcList={setNcList} />
-
-      <div className="font-semibold text-blue-700 mb-1">NC code</div>
-
-      {/* 리스트 */}
-      <div
-        className={`space-y-1 pr-1 ${
-          showScroll ? "max-h-[190px] overflow-y-auto" : "max-h-none overflow-y-hidden"
-        }`}
-      >
-        {ncList.map((nc) => {
-          const disabled = !isDeviceSelected;
-
-          return (
+      <div className="font-semibold text-blue-700 mb-1">NC List</div>
+      <div className={containerClassName} style={{ minHeight: "152px" }}>
+        {error ? (
+          <div className="text-red-400 text-sm text-center py-2">NC를 불러오는데 실패했습니다.</div>
+        ) : ncList.length === 0 ? (
+          <div className="text-gray-400 text-sm text-center py-2">NC가 없습니다.</div>
+        ) : (
+          ncList.map((nc) => (
             <div
-              key={nc.id}
-              className={`grid grid-cols-[36px_1.4fr_1.1fr_1.3fr_0.9fr] bg-white rounded-xl p-2 shadow border border-gray-100 items-center transition-opacity duration-200 ${
-                disabled ? "opacity-50 pointer-events-none" : ""
-              }`}
+              key={nc.workplan_id}
+              className="flex items-center bg-white rounded-xl p-2 shadow border border-gray-100 gap-2"
               style={{ minHeight: "36px" }}
             >
-              {/* 체크박스 */}
               <input
                 type="checkbox"
-                checked={checkedId === nc.id}
-                onChange={() => {
-                  if (disabled) return;
-
-                  const isSame = checkedId === nc.id;
-                  const nextId = isSame ? null : nc.id;
-                  setCheckedId(nextId);
-                  onSelectNc(isSame ? "" : nc.code);
-                }}
-                className="w-4 h-4 accent-blue-500 mx-auto"
-                disabled={disabled}
+                checked={selectedNc?.nc_code_id === nc.nc_code_id}
+                onChange={() => handleCheck(nc)}
+                className="w-4 h-4 accent-blue-500 mx-2 flex-shrink-0"
+                disabled={!isDeviceSelected}
               />
-
-              {/* Workplan */}
-              <div>
+              <div className="min-w-[100px] max-w-[140px] flex-shrink-0">
                 <div className="text-[11px] text-gray-400 leading-none">Workplan</div>
-                <div className="font-bold text-xs truncate leading-tight">{nc.workplan}</div>
+                <div className="font-bold text-black text-xs truncate leading-tight">{nc.workplan_id}</div>
               </div>
-
-              {/* NC code id */}
-              <div>
-                <div className="text-[11px] text-gray-400 leading-none">NC code id</div>
-                <div className="font-mono text-blue-600 text-xs truncate leading-tight">
-                  {nc.id}
-                </div>
+              <div className="min-w-[180px] max-w-[280px] flex-shrink-0">
+                <div className="text-[11px] text-gray-400 leading-none">NC Code ID</div>
+                <div className="font-mono text-blue-600 text-xs truncate leading-tight">{nc.nc_code_id}</div>
               </div>
-
-              {/* File name */}
-              <div>
-                <div className="text-[11px] text-gray-400 leading-none">File name</div>
-                <div className="text-xs truncate leading-tight">{nc.fileName}</div>
+              <div className="min-w-[120px] max-w-[140px] flex-shrink-0">
+                <div className="text-[11px] text-gray-400 leading-none">File Name</div>
+                <div className="text-xs leading-tight">{nc.fileName || "-"}</div>
               </div>
-
-              {/* Status */}
-              <div>
+              <div className="min-w-[140px] max-w-[170px] flex-shrink-0">
                 <div className="text-[11px] text-gray-400 leading-none">Status</div>
-                {isDeviceSelected ? (
-                  <div
-                    className={
-                      nc.status === "전송대기"
-                        ? "text-orange-500 text-xs"
-                        : "text-gray-700 text-xs"
-                    }
-                  >
-                    {nc.status}
-                  </div>
-                ) : (
-                  <div className="text-gray-300 text-xs italic">-</div>
-                )}
+                <div className="text-xs leading-tight">{nc.status || "-"}</div>
               </div>
             </div>
-          );
-        })}
+          ))
+        )}
       </div>
-
-      {/* 버튼 */}
       <div className="flex justify-end gap-2 mt-2">
-        <ActionButton color="gray" onClick={handleSave} disabled={!selectedNc}>
-          저장
-        </ActionButton>
-        <ActionButton color="blue" onClick={handleSend} disabled={isSendingDisabled||!selectedNc}>
-          장비전송
-        </ActionButton>
+        <ActionButton color="gray" onClick={handleSave} disabled={!selectedNc || loadingNc}>저장</ActionButton>
+        <ActionButton color="blue" onClick={handleSend} disabled={!selectedNc || loadingNc}>장비전송</ActionButton>
       </div>
     </div>
   );

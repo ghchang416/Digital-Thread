@@ -13,34 +13,39 @@ export default function Page() {
   const [searchType, setSearchType] = useState("project_name");
   const [searchValue, setSearchValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
   // 1. 프로젝트 리스트 fetch
   useEffect(() => {
-    async function fetchProjects() {
-      setLoading(true);
-      try {
-        // 실제 API 주소, 쿼리 파라미터로 변경
-        const params = new URLSearchParams({
-          page: currentPage.toString(),
-          size: PAGE_SIZE.toString(),
-          type: searchType,
-          value: searchValue,
-        }).toString();
-        const res = await fetch(`/api/projects?${params}`);
-        //
+  async function fetchProjects() {
+    setLoading(true);
+    setError(false); // 초기화
+    try {
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: PAGE_SIZE.toString(),
+        ...(searchType === "name" && { name: searchValue }),
+        ...(searchType === "project_id" && {project_id: searchValue }),
+      }).toString();
 
-        if (!res.ok) throw new Error("데이터 불러오기 실패");
-        const data = await res.json();
-        setProjects(data.projects);
-        setTotalCount(data.totalCount);
-      } catch (e) {
-        setProjects([]);
-        setTotalCount(0);
-      }
-      setLoading(false);
+      const res = await fetch(`${baseUrl}/api/projects?${params}`);
+      if (!res.ok) throw new Error("데이터 불러오기 실패");
+
+      const data = await res.json();
+      setProjects(data.projects);
+      setTotalCount(data.total);
+    } catch (e) {
+      setError(true);
+      setProjects([]);
+      setTotalCount(0);
     }
-    fetchProjects();
-  }, [currentPage, searchType, searchValue]);
+    setLoading(false);
+  }
+
+  fetchProjects();
+}, [currentPage, searchType, searchValue]);
 
 
   // 실제로는 API 호출 등으로 검색 처리
@@ -66,7 +71,8 @@ export default function Page() {
         </div>
         {loading ? (
           <div className="text-center text-gray-400 py-8">불러오는 중...</div>
-        ) : (
+        ) : error? (<div className="text-center text-red-400 py-8">프로젝트를 불러오는데 실패했습니다.</div>) :
+        (
           <ProjectList projects={projects} onDetail={handleDetail} />
         )}
         <ProjectNavBar
