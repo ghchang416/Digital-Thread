@@ -9,6 +9,15 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorCollection
 from src.schemas.machine import MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse
 from src.entities.file import FileRepository
 from src.utils.exceptions import CustomException, ExceptionEnum
+import logging
+
+logger = logging.getLogger("machine_tracker")
+logging.basicConfig(
+    level=logging.INFO,  # info 로그까지 보이도록 설정
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
 
 class MachineService:
     gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://host.docker.internal:5000")
@@ -69,12 +78,8 @@ class MachineService:
                 "ncpath": ncpath
             }
 
-            self.redis_tracker.redis_client.hset(f"status:{project_id}:{filename}", mapping={
-                "machine_id": str(machine_id),
-                "status": "가공 대기",
-                "upload_time": datetime.now().isoformat()
-            })
             self.redis_tracker.enqueue_job(machine_id, filename, project_id)
+
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.put(
                     f"{self.gateway_base_url}/file/machine/ncpath",
@@ -118,36 +123,62 @@ class MachineService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data.get("value", [None])[0] or ""
+                logging.info(f"📦 Response JSON: {data}")
+                program_name = data.get("value", [None])[0]
+                if not program_name or not isinstance(program_name, str):
+                    return ""
+                return program_name
+
         except Exception:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
+
+
     async def track_all_machines_forever(self):
+        tracked_machines = set()
         while True:
             machines = await self.get_machine_list()
-            for machine_id in [m.machine_id for m in machines.machines]:
-                asyncio.create_task(self._track_single_machine(machine_id))
+            machine_ids = [m.id for m in machines.machines]
+
+            logger.info(f"📡 Found {len(machine_ids)} machines: {machine_ids}")
+
+            for machine_id in machine_ids:
+                if machine_id not in tracked_machines:
+                    tracked_machines.add(machine_id)
+                    logger.info(f"🛰️ Starting tracking for machine {machine_id}")
+                    asyncio.create_task(self._track_single_machine(machine_id))
+
             await asyncio.sleep(10)
+
 
     async def _track_single_machine(self, machine_id: int):
         while True:
-            status = await self.get_machine_status(machine_id)
-            if status.programMode == 3:
-                await self._process_machine_queue(machine_id)
+            try:
+                status = await self.get_machine_status(machine_id)
+                logger.info(f"🔍 Machine {machine_id} status = {status.programMode}")
+
+                if status.programMode == 3:
+                    queue_data = self.redis_tracker.peek_job(machine_id)
+                    logger.info(f"📦 Peeked queue for machine {machine_id}: {queue_data}")
+                    
+                    if queue_data:
+                        filename, project_id = queue_data
+                        program_name = await self.get_current_program_name(machine_id)
+                        logger.info(f"🎯 Machine {machine_id} current program = {program_name}, queue filename = {filename}")
+
+                        if program_name == filename:
+                            self.redis_tracker.mark_processing(project_id, filename, machine_id)
+                            logger.info(f"✅ Processing started: {filename} on machine {machine_id}")
+                        else:
+                            self.redis_tracker.mark_finished(project_id, filename, machine_id)
+                            self.redis_tracker.pop_job(machine_id)
+                            logger.info(f"🏁 Finished: {filename} on machine {machine_id}")
+            except Exception as e:
+                logger.error(f"❌ Error tracking machine {machine_id}: {e}", exc_info=True)
+
             await asyncio.sleep(3)
 
-    async def _process_machine_queue(self, machine_id: int):
-        program_name = await self.get_current_program_name(machine_id)
-        queue_data = self.redis_tracker.peek_job(machine_id)
-        if not queue_data:
-            return
 
-        filename, project_id = queue_data
-        if program_name == filename:
-            self.redis_tracker.mark_processing(project_id, filename)
-        else:
-            self.redis_tracker.mark_finished(project_id, filename)
-            self.redis_tracker.pop_job(machine_id)
 
     async def _monitor_machine_state(self, project_id: str, machine_id: int):
         mode = 0

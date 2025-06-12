@@ -70,5 +70,5 @@ async def get_project_machine_status(
     project_id: str,
     project_service: ProjectService = Depends(get_project_service)
 ):
-    return project_service.get_machine_status_info(project_id)
+    return RedisJobTracker().get_all_statuses(project_id)
 

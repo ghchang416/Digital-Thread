@@ -1,9 +1,12 @@
-from fastapi import FastAPI, Request
+import asyncio
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from src.apis.project import router as project_router
 from src.apis.machine import router as machine_router
 from src.utils.exceptions import CustomException
+from src.database import get_grid_fs, get_product_log_collection
+from src.services.machine import MachineService
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
@@ -21,6 +24,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def start_tracking_all_machines():
+    grid_fs = get_grid_fs()
+    product_log_collection = get_product_log_collection()
+    machine_service = MachineService(grid_fs, product_log_collection)
+
+    asyncio.create_task(machine_service.track_all_machines_forever())
+    
 @app.exception_handler(CustomException)
 async def custom_exception_handler(request: Request, exc: CustomException):
     return JSONResponse(
