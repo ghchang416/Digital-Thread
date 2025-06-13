@@ -5,41 +5,63 @@ import { useEffect } from "react";
 type NcData = {
   workplan_id: string;
   nc_code_id: string;
-  fileName?: string | null;
+  filename?: string | null;
   status?: string | null;
   code?: string | null;
 };
 
 type Props = {
+  projectId: string;
   ncList: NcData[];
   setNcList: (updater: (prev: NcData[]) => NcData[]) => void;
+  selectedDeviceId: string | null;
 };
 
-export default function NcStatusMonitor({ ncList, setNcList }: Props) {
+export default function NcStatusMonitor({
+  projectId,
+  selectedDeviceId,
+  ncList,
+  setNcList,
+}: Props & { selectedDeviceId: string | null }) {
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+
   useEffect(() => {
+    if (!selectedDeviceId) return;
+
+    console.log("🟡 NcStatusMonitor polling 시작됨");
+
     const intervalId = setInterval(async () => {
-      const targets = ncList.filter((nc) => nc.status === "가공대기");
+      const pendingList = ncList.filter((nc) => nc.status === "가공대기");
+      if (pendingList.length === 0) return;
 
-      if (targets.length === 0) return;
+      try {
 
-      const updatedStatuses = await Promise.all(
-        targets.map(async (nc) => {
-          const res = await fetch(`/api/nc/${nc.workplan_id}`);
-          const data = await res.json(); // { id, status }
-          return data;
-        })
-      );
+        console.log("polling 진행중");
+        const res = await fetch(`${baseUrl}/api/projects/${projectId}/nc/status`);
+        if (!res.ok) throw new Error("NC 상태 조회 실패");
+        const data = await res.json();
 
-      setNcList((prevList) =>
-        prevList.map((nc) => {
-          const updated = updatedStatuses.find((u) => u.id === nc.workplan_id);
-          return updated ? { ...nc, status: updated.status } : nc;
-        })
-      );
+        setNcList((prevList) =>
+          prevList.map((nc) => {
+            const filename = nc.filename || "";
+            const deviceMap = data[filename];
+            if (!deviceMap || !deviceMap[selectedDeviceId]) return nc;
+
+            const updatedEntry = deviceMap[selectedDeviceId];
+            return {
+              ...nc,
+              status: updatedEntry.status,
+            };
+          })
+        );
+      } catch (err) {
+        console.error("NC 상태 업데이트 실패:", err);
+      }
     }, 5000);
 
     return () => clearInterval(intervalId);
-  }, [ncList, setNcList]);
+  }, [projectId, selectedDeviceId, ncList, setNcList]);
 
-  return null; // 렌더링은 하지 않음
+  return null;
+
 }

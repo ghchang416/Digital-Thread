@@ -5,7 +5,7 @@ import NcStatusMonitor from "./NcStatusMonitor";
 type NcData = {
   workplan_id: string;
   nc_code_id: string;
-  fileName?: string | null;
+  filename?: string | null;
   status?: string | null;
   code?: string | null;
 };
@@ -93,6 +93,8 @@ export default function NcList({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: ncContent }),
       });
+
+      console.log(res);
       if (!res.ok) throw new Error("저장 실패");
       alert("파일이 서버에 저장되었습니다.");
       await fetchNcList(true);
@@ -109,6 +111,7 @@ export default function NcList({
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
+      console.log(res);
       if (!res.ok) throw new Error("장비 전송 실패");
       alert("장비로 전송되었습니다.");
     } catch (error) {
@@ -117,11 +120,20 @@ export default function NcList({
     }
   };
 
-
-
   useEffect(() => {
     fetchNcList();
   }, [projectId]);
+
+  useEffect(() => {
+    if (selectedDeviceId === null) {
+      setNcList((prevList) =>
+        prevList.map((nc) => ({
+          ...nc,
+          status: "-",
+        }))
+      );
+    }
+  }, [selectedDeviceId]);
 
   const showScroll = ncList.length > 4;
   const containerClassName =
@@ -129,9 +141,41 @@ export default function NcList({
     (showScroll ? " max-h-[190px] overflow-y-auto" : " max-h-none overflow-y-hidden") +
     (loadingNc ? " opacity-50 pointer-events-none" : "");
 
+  useEffect(() => {
+    const initStatusCache = async () => {
+      if (!selectedDeviceId) return;
+
+      try {
+        const res = await fetch(`${baseUrl}/api/projects/${projectId}/nc/status`);
+        if (!res.ok) throw new Error("NC 상태 초기화 실패");
+        const data = await res.json();
+
+        setNcList((prevList) =>
+          prevList.map((nc) => {
+            const filename = nc.filename || "";
+            const deviceMap = data[filename];
+            if (!deviceMap) return nc;
+
+            const updatedEntry = Object.values(deviceMap)[0] as { status: string; upload_time: string };
+            return updatedEntry ? { ...nc, status: updatedEntry.status } : nc;
+          })
+        );
+      } catch (err) {
+        console.error("🟥 NC 상태 캐시 초기화 실패:", err);
+      }
+    };
+
+    initStatusCache();
+  }, [selectedDeviceId]);
+
   return (
     <div>
-      <NcStatusMonitor ncList={ncList} setNcList={setNcList} />
+      <NcStatusMonitor
+        projectId={projectId}
+        ncList={ncList}
+        setNcList={setNcList}
+        selectedDeviceId={selectedDeviceId} />
+
       <div className="font-semibold text-blue-700 mb-1">NC List</div>
       <div className={containerClassName} style={{ minHeight: "152px" }}>
         {error ? (
@@ -161,7 +205,7 @@ export default function NcList({
               </div>
               <div className="min-w-[120px] max-w-[140px] flex-shrink-0">
                 <div className="text-[11px] text-gray-400 leading-none">File Name</div>
-                <div className="text-xs leading-tight">{nc.fileName || "-"}</div>
+                <div className="text-xs leading-tight">{nc.filename || "-"}</div>
               </div>
               <div className="min-w-[140px] max-w-[170px] flex-shrink-0">
                 <div className="text-[11px] text-gray-400 leading-none">Status</div>
