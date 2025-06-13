@@ -12,20 +12,22 @@ type NcData = {
 
 export default function NcList({
   projectId,
-  isDeviceSelected,
   selectedNc,
   selectedDeviceId,
   setSelectedNc,
   ncContent,
   setNcContent,
+  originalNcContent,
+  setOriginalNcContent,
 }: {
   projectId: string;
-  isDeviceSelected: boolean;
   selectedNc: NcData | null;
   selectedDeviceId: string | null;
   setSelectedNc: (nc: NcData | null) => void;
   ncContent: string;
   setNcContent: (content: string) => void;
+  originalNcContent: string;
+  setOriginalNcContent: (content: string) => void;
 }) {
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   const [ncList, setNcList] = useState<NcData[]>([]);
@@ -55,8 +57,6 @@ export default function NcList({
   };
 
   const handleCheck = async (nc: NcData) => {
-    if (!isDeviceSelected) return;
-
     const isSame = selectedNc?.nc_code_id === nc.nc_code_id;
     const nextNc = isSame ? null : nc;
     setSelectedNc(nextNc);
@@ -70,14 +70,17 @@ export default function NcList({
         );
         const data = await res.json();
         setNcContent(data.content || "");
+        setOriginalNcContent(data.content || "");  // 불러온 원본 저장
       } catch (e) {
         alert("NC 코드 불러오기 실패");
         setNcContent("");
+        setOriginalNcContent("");
       } finally {
         setLoadingNc(false);
       }
     } else {
       setNcContent("");
+      setOriginalNcContent("");
     }
   };
 
@@ -114,13 +117,11 @@ export default function NcList({
     }
   };
 
+
+
   useEffect(() => {
     fetchNcList();
   }, [projectId]);
-
-  useEffect(() => {
-    if (!isDeviceSelected) setSelectedNc(null);
-  }, [isDeviceSelected]);
 
   const showScroll = ncList.length > 4;
   const containerClassName =
@@ -149,7 +150,6 @@ export default function NcList({
                 checked={selectedNc?.nc_code_id === nc.nc_code_id}
                 onChange={() => handleCheck(nc)}
                 className="w-4 h-4 accent-blue-500 mx-2 flex-shrink-0"
-                disabled={!isDeviceSelected}
               />
               <div className="min-w-[100px] max-w-[140px] flex-shrink-0">
                 <div className="text-[11px] text-gray-400 leading-none">Workplan</div>
@@ -172,8 +172,13 @@ export default function NcList({
         )}
       </div>
       <div className="flex justify-end gap-2 mt-2">
-        <ActionButton color="gray" onClick={handleSave} disabled={!selectedNc || loadingNc}>저장</ActionButton>
-        <ActionButton color="blue" onClick={handleSend} disabled={!selectedNc || loadingNc}>장비전송</ActionButton>
+        <ActionButton
+          color="gray"
+          onClick={handleSave}
+          disabled={!selectedNc || loadingNc || ncContent === originalNcContent}  // 추가
+        >저장
+        </ActionButton>
+        <ActionButton color="blue" onClick={handleSend} disabled={!selectedNc || loadingNc || !selectedDeviceId}>장비전송</ActionButton>
       </div>
     </div>
   );
