@@ -1,17 +1,6 @@
 version: '3.8'
 
 services:
-  dll-server:
-    build:
-      context: ./CS_WrapAPI
-    container_name: dll_server
-    ports:
-      - "8010:8010"
-    volumes:
-      - ./CS_WrapAPI:/dll/
-    networks:
-      - kitech_network
-
   mongo:
     image: mongo:latest
     container_name: mongo_container
@@ -56,8 +45,6 @@ services:
       PYTHONUNBUFFERED: 1
     networks:
       - kitech_network
-    extra_hosts:
-      - "host.docker.internal:10.170.27.45"
 
   redis:
     image: redis:7-alpine

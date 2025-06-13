@@ -20,7 +20,7 @@ logging.basicConfig(
 
 
 class MachineService:
-    gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://host.docker.internal:5000")
+    gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://10.10.10.49:5001")
     
     def __init__(self, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.repository = FileRepository(grid_fs)
@@ -36,12 +36,13 @@ class MachineService:
         try:
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
-                    f"{self.gateway_base_url}/machine/ncMemory/rootPath",
-                    params={"machine": machine_id}
+                    f"{self.gateway_base_url}/machine/channel/currentProgram/mainFile/programPath",
+                    params={"machine": machine_id, "channel": 1}
                 )
                 response.raise_for_status()
                 data = response.json()
                 root_path = data.get("value", "")[0]
+                logging.info("root:", root_path)
                 if not root_path:
                     raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
                 self.nc_root_paths[machine_id] = root_path
@@ -68,6 +69,7 @@ class MachineService:
         try:
             byte_io, filename = await self.repository.get_file_byteio_and_name(file_id)
             file_data = byte_io.read()
+            logging.info(f"📦 Uploading {filename} size: {len(file_data)} bytes")
             ncpath = await self._get_nc_root_path(machine_id)
 
             files = {
@@ -152,74 +154,84 @@ class MachineService:
 
 
     async def _track_single_machine(self, machine_id: int):
+        current_tool = None
+        operation_index = 1
+        product_uuid = str(uuid.uuid4())
+        log_doc = None
+        is_processing = False
+
         while True:
             try:
                 status = await self.get_machine_status(machine_id)
                 logger.info(f"🔍 Machine {machine_id} status = {status.programMode}")
 
-                if status.programMode == 3:
+                if status.programMode == 3:  # 가공 중
                     queue_data = self.redis_tracker.peek_job(machine_id)
-                    logger.info(f"📦 Peeked queue for machine {machine_id}: {queue_data}")
-                    
+
                     if queue_data:
                         filename, project_id = queue_data
                         program_name = await self.get_current_program_name(machine_id)
-                        logger.info(f"🎯 Machine {machine_id} current program = {program_name}, queue filename = {filename}")
 
                         if program_name == filename:
                             self.redis_tracker.mark_processing(project_id, filename, machine_id)
-                            logger.info(f"✅ Processing started: {filename} on machine {machine_id}")
+                            logger.info(f"✅ Processing: {filename} on machine {machine_id}")
+
+                            tool = await self._get_active_tool_number(machine_id)
+
+                            if not is_processing:
+                                # 최초 가공 시작
+                                is_processing = True
+                                current_tool = tool
+                                log_doc = {
+                                    "project_id": project_id,
+                                    "machine_id": machine_id,
+                                    "product_uuid": product_uuid,
+                                    "start_time": datetime.now(),
+                                    "finish_time": None,
+                                    "finished": False,
+                                    "operations": []
+                                }
+                                await self._log_product_operation(log_doc, operation_index, current_tool, "start")
+                            elif tool != current_tool:
+                                # 툴 변경
+                                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                                operation_index += 1
+                                await self._log_product_operation(log_doc, operation_index, tool, "start")
+                                current_tool = tool
+
                         else:
+                            # 현재 프로그램이 queue와 다르면 이전 가공 종료로 간주
                             self.redis_tracker.mark_finished(project_id, filename, machine_id)
                             self.redis_tracker.pop_job(machine_id)
                             logger.info(f"🏁 Finished: {filename} on machine {machine_id}")
+                            if log_doc:
+                                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                                log_doc["finish_time"] = datetime.now()
+                                log_doc["finished"] = True
+                                await self.product_log_collection.insert_one(log_doc)
+                            is_processing = False
+                            log_doc = None
+
+                elif is_processing:
+                    # 가공 종료 감지
+                    self.redis_tracker.mark_finished(project_id, filename, machine_id)
+                    self.redis_tracker.pop_job(machine_id)
+                    logger.info(f"🏁 Machine {machine_id} exited processing mode.")
+
+                    await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                    log_doc["finish_time"] = datetime.now()
+                    log_doc["finished"] = True
+                    await self.product_log_collection.insert_one(log_doc)
+
+                    is_processing = False
+                    log_doc = None
+
             except Exception as e:
                 logger.error(f"❌ Error tracking machine {machine_id}: {e}", exc_info=True)
 
             await asyncio.sleep(3)
 
 
-
-    async def _monitor_machine_state(self, project_id: str, machine_id: int):
-        mode = 0
-        current_tool = None
-        operation_index = 1
-        product_uuid = str(uuid.uuid4())
-
-        log_doc = {
-            "project_id": project_id,
-            "machine_id": machine_id,
-            "product_uuid": product_uuid,
-            "start_time": datetime.now(),
-            "finish_time": None,
-            "finished": False,
-            "operations": []
-        }
-
-        while True:
-            status = await self.get_machine_status(machine_id)
-
-            if status.programMode == 1 and mode != 3:
-                mode = 3
-                current_tool = await self._get_active_tool_number(machine_id)
-                await self._log_product_operation(log_doc, operation_index, current_tool, "start")
-
-            elif status.programMode == 1 and mode == 3:
-                tool = await self._get_active_tool_number(machine_id)
-                if tool != current_tool:
-                    await self._log_product_operation(log_doc, operation_index, current_tool, "end")
-                    operation_index += 1
-                    await self._log_product_operation(log_doc, operation_index, tool, "start")
-                    current_tool = tool
-
-            elif status.programMode != 1 and mode == 3:
-                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
-                log_doc["finish_time"] = datetime.now()
-                log_doc["finished"] = True
-                await self.product_log_collection.insert_one(log_doc)
-                break
-
-            await asyncio.sleep(1)
 
     async def _log_product_operation(self, log_doc: dict, index: int, tool_number: int, action: str):
         if action == "start":

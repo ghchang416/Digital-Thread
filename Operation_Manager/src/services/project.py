@@ -98,6 +98,9 @@ class ProjectService:
         """
         기존 NC 코드를 삭제하고 새 파일로 업데이트하며 XML의 its_id도 갱신
         """
+        
+        _, filename = await self.file_repository.get_file_byteio_and_name(nc_code_id)
+
         # 프로젝트 불러오기
         project = await self.project_repository.get_project_by_id(project_id)
         if not project:
@@ -112,7 +115,7 @@ class ProjectService:
 
         # 새 NC 파일 업로드 (문자열 → BytesIO로 인코딩)
         new_file_io = io.BytesIO(new_nc_content.encode("utf-8"))
-        new_file_id = await self.file_repository.insert_file(new_file_io, f"{nc_code_id}.nc")
+        new_file_id = await self.file_repository.insert_file(new_file_io, filename)
 
         # XML 내 해당 workplan의 nc_code its_id 갱신
         try:

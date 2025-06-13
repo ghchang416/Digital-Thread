@@ -12,3 +12,4 @@ python-dotenv
 aiofiles
 chardet
 motor
+redis
