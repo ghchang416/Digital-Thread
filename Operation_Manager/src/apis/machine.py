@@ -15,10 +15,9 @@ async def upload_torus_file(
     project_id: str, 
     machine_id: int, 
     nc_id: str, 
-    background_tasks: BackgroundTasks,
     service: MachineService = Depends(get_file_service)
 ):
-    return await service.upload_torus_file(project_id, machine_id, nc_id, background_tasks)
+    return await service.upload_torus_file(project_id, machine_id, nc_id)
 
 @router.get("/{machine_id}/status", response_model=MachineProgramStatusResponse)
 async def get_machine_status(

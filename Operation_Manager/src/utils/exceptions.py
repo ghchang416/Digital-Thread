@@ -6,6 +6,7 @@ class ExceptionEnum(Enum):
     STP_NOT_FOUND = ("STEP file not found", 404)
     NO_DATA_FOUND = ("Requested data not found", 404)
     NC_NOT_EXIST = ("Please enter the nc code first", 404)
+    MACHINE_NOT_FOUND = ("일치하는 장비 id를 찾을 수 없습니다.", 404)
 
     # 400 BAD REQUEST
     INVALID_XML_FORMAT = ("Invalid XML format", 400)
@@ -18,6 +19,8 @@ class ExceptionEnum(Enum):
     NO_JSON_DATA_PROVIDED = ("No JSON data provided", 400)
     UNSUPPORTED_FILE_TYPE = ("Unsupported file type", 400)
     WORKPLAN_EXIST = ("Already Workplan Exist", 400)
+    INVALID_SIMENSE_FORMAT = ("Simense 장비의 G-code에 O 번호가 없습니다.", 400)
+    INVALID_FILE_NAME_FORMAT = ("Simense 장비의 파일 이름은 O번호와 일치해야 합니다.", 400)
     
     # 500 INTERNAL SERVER ERROR
     EXTERNAL_REQUEST_ERROR = ("Torus Application 연결 실패", 500)

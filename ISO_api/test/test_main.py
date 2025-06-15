@@ -7,7 +7,7 @@ from src.main import app
 BASE_DIR = "/data"
 xml_path = os.path.join(BASE_DIR, "xml", "sample.xml")
 step_path = os.path.join(BASE_DIR, "step", "sample.stp")
-nc_path = os.path.join(BASE_DIR, "nc", "O2002.nc")
+nc_path = os.path.join(BASE_DIR, "nc", "O9002.nc")
 # tdms_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250113114429.tdms")
 # log_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250112111811_ext.log")
 
@@ -61,7 +61,7 @@ async def upload_nc_file(client: AsyncClient, project_id, workplan_id):
         response = await client.post(
             "/api/upload/nc",
             data={"project_id": project_id, "workplan_id": workplan_id},
-            files={"nc_file": ("O2002.nc", f, "text/plain")}
+            files={"nc_file": ("O9002.nc", f, "text/plain")}
         )
     assert response.status_code == status.HTTP_201_CREATED
     return response.json()["file_id"]

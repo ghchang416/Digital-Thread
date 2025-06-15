@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 import os
+import re
 import uuid
 import httpx
 from src.services.redis import RedisJobTracker
@@ -65,12 +66,32 @@ class MachineService:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
 
-    async def upload_torus_file(self, project_id: str, machine_id: int, file_id: str, background_tasks: BackgroundTasks) -> MachineFileUploadResponse:
+    async def upload_torus_file(self, project_id: str, machine_id: int, file_id: str) -> MachineFileUploadResponse:
         try:
             byte_io, filename = await self.repository.get_file_byteio_and_name(file_id)
             file_data = byte_io.read()
-            logging.info(f"📦 Uploading {filename} size: {len(file_data)} bytes")
             ncpath = await self._get_nc_root_path(machine_id)
+        
+            machines = await self.get_machine_list()
+            matched_machine = next((m for m in machines.machines if m.id == machine_id), None)
+
+            if not matched_machine:
+                raise CustomException(ExceptionEnum.MACHINE_NOT_FOUND)
+
+            # vendorCode가 simense인 경우 O번호 체크
+            if matched_machine.vendorCode.lower() == "simense":
+                # G-code 파일 내용 디코딩 후 'O1234' 번호 추출
+                content_str = file_data.decode(errors="ignore")
+                o_match = re.search(r"\bO(\d+)", content_str)
+
+                if not o_match:
+                    raise CustomException(ExceptionEnum.INVALID_SIMENSE_FORMAT)
+
+                o_number = f"O{o_match.group(1)}"
+
+                if not filename.startswith(o_number):
+                    raise CustomException(ExceptionEnum.INVALID_FILE_NAME_FORMAT)
+
 
             files = {
                 "file": (filename, file_data, "application/octet-stream")
