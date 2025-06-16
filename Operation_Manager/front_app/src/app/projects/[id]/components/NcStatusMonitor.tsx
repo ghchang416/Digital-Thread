@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect } from "react";
 
 type NcData = {
@@ -12,9 +11,9 @@ type NcData = {
 
 type Props = {
   projectId: string;
+  selectedDeviceId: string | null;
   ncList: NcData[];
   setNcList: (updater: (prev: NcData[]) => NcData[]) => void;
-  selectedDeviceId: string | null;
 };
 
 export default function NcStatusMonitor({
@@ -22,7 +21,7 @@ export default function NcStatusMonitor({
   selectedDeviceId,
   ncList,
   setNcList,
-}: Props & { selectedDeviceId: string | null }) {
+}: Props) {
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
   useEffect(() => {
@@ -31,26 +30,21 @@ export default function NcStatusMonitor({
     console.log("🟡 NcStatusMonitor polling 시작됨");
 
     const intervalId = setInterval(async () => {
-      const pendingList = ncList.filter((nc) => nc.status === "가공대기");
-      if (pendingList.length === 0) return;
-
+      console.log("🔁 polling 수행 중...");
       try {
-
-        console.log("polling 진행중");
         const res = await fetch(`${baseUrl}/api/projects/${projectId}/nc/status`);
         if (!res.ok) throw new Error("NC 상태 조회 실패");
-        const data = await res.json();
+
+        const data = await res.json(); // { filename: { deviceId: { status, upload_time } } }
 
         setNcList((prevList) =>
           prevList.map((nc) => {
             const filename = nc.filename || "";
             const deviceMap = data[filename];
-            if (!deviceMap || !deviceMap[selectedDeviceId]) return nc;
-
-            const updatedEntry = deviceMap[selectedDeviceId];
+            const entry = deviceMap?.[selectedDeviceId]; // 선택한 장비 ID에 해당하는 상태만 사용
             return {
               ...nc,
-              status: updatedEntry.status,
+              status: entry?.status ?? "-", // 해당 장비 ID 없으면 "-"
             };
           })
         );
@@ -60,8 +54,7 @@ export default function NcStatusMonitor({
     }, 5000);
 
     return () => clearInterval(intervalId);
-  }, [projectId, selectedDeviceId, ncList, setNcList]);
+  }, [projectId, selectedDeviceId, setNcList]);
 
   return null;
-
 }

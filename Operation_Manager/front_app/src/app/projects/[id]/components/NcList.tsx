@@ -105,18 +105,31 @@ export default function NcList({
 
   const handleSend = async () => {
     if (!selectedNc || !selectedDeviceId) return;
+
     const url = `${baseUrl}/api/machines/${selectedDeviceId}/send_nc?project_id=${projectId}&nc_id=${selectedNc.nc_code_id}`;
+
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-      console.log(res);
-      if (!res.ok) throw new Error("장비 전송 실패");
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 400 && result?.detail) {
+          alert(`전송 실패: ${result.detail}`);
+        } else {
+          alert("장비 전송 중 오류가 발생했습니다.");
+        }
+        console.error("장비 전송 실패:", result);
+        return;
+      }
+
       alert("장비로 전송되었습니다.");
     } catch (error) {
-      console.error("장비 전송 실패:", error);
-      alert("장비 전송 중 오류가 발생했습니다.");
+      console.error("장비 전송 예외 발생:", error);
+      alert("장비 전송 중 네트워크 오류가 발생했습니다.");
     }
   };
 
@@ -125,25 +138,16 @@ export default function NcList({
   }, [projectId]);
 
   useEffect(() => {
-    if (selectedDeviceId === null) {
-      setNcList((prevList) =>
-        prevList.map((nc) => ({
-          ...nc,
-          status: "-",
-        }))
-      );
-    }
-  }, [selectedDeviceId]);
-
-  const showScroll = ncList.length > 4;
-  const containerClassName =
-    "space-y-1 pr-1" +
-    (showScroll ? " max-h-[190px] overflow-y-auto" : " max-h-none overflow-y-hidden") +
-    (loadingNc ? " opacity-50 pointer-events-none" : "");
-
-  useEffect(() => {
-    const initStatusCache = async () => {
-      if (!selectedDeviceId) return;
+    const updateStatusOnDeviceChange = async () => {
+      if (!selectedDeviceId) {
+        setNcList((prevList) =>
+          prevList.map((nc) => ({
+            ...nc,
+            status: "-",
+          }))
+        );
+        return;
+      }
 
       try {
         const res = await fetch(`${baseUrl}/api/projects/${projectId}/nc/status`);
@@ -154,10 +158,11 @@ export default function NcList({
           prevList.map((nc) => {
             const filename = nc.filename || "";
             const deviceMap = data[filename];
-            if (!deviceMap) return nc;
-
-            const updatedEntry = Object.values(deviceMap)[0] as { status: string; upload_time: string };
-            return updatedEntry ? { ...nc, status: updatedEntry.status } : nc;
+            const entry = deviceMap?.[selectedDeviceId];
+            return {
+              ...nc,
+              status: entry?.status ?? "-",
+            };
           })
         );
       } catch (err) {
@@ -165,8 +170,14 @@ export default function NcList({
       }
     };
 
-    initStatusCache();
+    updateStatusOnDeviceChange();
   }, [selectedDeviceId]);
+
+  const showScroll = ncList.length > 4;
+  const containerClassName =
+    "space-y-1 pr-1" +
+    (showScroll ? " max-h-[190px] overflow-y-auto" : " max-h-none overflow-y-hidden") +
+    (loadingNc ? " opacity-50 pointer-events-none" : "");
 
   return (
     <div>
@@ -219,7 +230,7 @@ export default function NcList({
         <ActionButton
           color="gray"
           onClick={handleSave}
-          disabled={!selectedNc || loadingNc || ncContent === originalNcContent}  // 추가
+          disabled={!selectedNc || loadingNc || ncContent === originalNcContent}
         >저장
         </ActionButton>
         <ActionButton color="blue" onClick={handleSend} disabled={!selectedNc || loadingNc || !selectedDeviceId}>장비전송</ActionButton>

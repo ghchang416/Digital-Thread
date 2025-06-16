@@ -19,22 +19,10 @@ export default function ProjectDetailClient({ project }: { project: { id: string
   const [ncContent, setNcContent] = useState("");
   const [selectedNc, setSelectedNc] = useState<NcData | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [originalNcContent, setOriginalNcContent] = useState(""); 
+  const [originalNcContent, setOriginalNcContent] = useState("");
 
   const handleDeviceSelect = async (deviceId: string | null) => {
     setSelectedDeviceId(deviceId);
-
-    if (deviceId) {
-      try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/projects/${project.id}/initialize-job-cache`
-        );
-        if (!res.ok) throw new Error("Job 캐시 초기화 실패");
-        console.log("✅ 작업 캐시 초기화 완료");
-      } catch (error) {
-        console.error("⚠️ 작업 캐시 초기화 중 오류 발생:", error);
-      }
-    }
   };
 
   return (
@@ -66,7 +54,7 @@ export default function ProjectDetailClient({ project }: { project: { id: string
               setOriginalNcContent={setOriginalNcContent} // 추가
             />
             <MachineList onSelect={handleDeviceSelect} disabled={!selectedNc} />
-            <ProductList projectId={project.id}/>
+            <ProductList projectId={project.id} />
           </div>
         </section>
       </main>
