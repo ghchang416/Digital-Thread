@@ -1,4 +1,4 @@
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase, AsyncIOMotorCollection
 from dotenv import load_dotenv
 from functools import lru_cache
 from fastapi import Depends
@@ -24,3 +24,12 @@ async def get_product_log_collection(db: AsyncIOMotorDatabase = Depends(get_db))
 
 async def get_grid_fs(db: AsyncIOMotorDatabase = Depends(get_db)):
     return AsyncIOMotorGridFSBucket(db, bucket_name="files")
+
+def get_db_raw() -> AsyncIOMotorDatabase:
+    return get_motor_client()[DATABASE_NAME]
+
+def get_product_log_collection_raw() -> AsyncIOMotorCollection:
+    return get_db_raw()["product_logs"]
+
+def get_grid_fs_raw() -> AsyncIOMotorGridFSBucket:
+    return AsyncIOMotorGridFSBucket(get_db_raw(), bucket_name="files")

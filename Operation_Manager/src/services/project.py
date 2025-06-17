@@ -18,7 +18,7 @@ class ProjectService:
     def __init__(self, collection: AsyncIOMotorCollection, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.project_repository = ProjectRepository(collection)
         self.file_repository = FileRepository(grid_fs)
-        self.product_log_collection = product_log_collection  
+        self.product_log_collection = product_log_collection
     
     async def get_project_list(self, filter: ProjectSearchFilter):
         projects = await self.project_repository.get_project_list(filter)

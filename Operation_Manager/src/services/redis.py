@@ -54,3 +54,7 @@ class RedisJobTracker:
                 result[filename] = {}
             result[filename][machine_id] = entry
         return result
+
+    def get_job_queue(self, machine_id: int) -> List[str]:
+        queue_key = f"queue:{machine_id}"
+        return self.redis_client.lrange(queue_key, 0, -1)

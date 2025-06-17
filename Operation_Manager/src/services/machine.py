@@ -26,7 +26,7 @@ class MachineService:
     def __init__(self, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
         self.repository = FileRepository(grid_fs)
         self.nc_root_paths = {}
-        self.product_log_collection = product_log_collection
+        self.product_log_collection = product_log_collection  
         self.redis_tracker = RedisJobTracker() 
 
 
@@ -37,13 +37,13 @@ class MachineService:
         try:
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
-                    f"{self.gateway_base_url}/machine/channel/currentProgram/mainFile/programPath",
-                    params={"machine": machine_id, "channel": 1}
+                    f"{self.gateway_base_url}/machine/ncMemory/rootPath",
+                    params={"machine": machine_id}
                 )
                 response.raise_for_status()
                 data = response.json()
                 root_path = data.get("value", "")[0]
-                logging.info("root:", root_path)
+                logging.info(root_path)
                 if not root_path:
                     raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
                 self.nc_root_paths[machine_id] = root_path
@@ -78,8 +78,9 @@ class MachineService:
             if not matched_machine:
                 raise CustomException(ExceptionEnum.MACHINE_NOT_FOUND)
 
+            
             # vendorCode가 simense인 경우 O번호 체크
-            if matched_machine.vendorCode.lower() == "simense":
+            if matched_machine.vendorCode.lower() == "fanuc":
                 # G-code 파일 내용 디코딩 후 'O1234' 번호 추출
                 content_str = file_data.decode(errors="ignore")
                 o_match = re.search(r"\bO(\d+)", content_str)
@@ -92,6 +93,9 @@ class MachineService:
                 if not filename.startswith(o_number):
                     raise CustomException(ExceptionEnum.INVALID_FILE_NAME_FORMAT)
 
+            file_list = await self.get_file_list(machine_id, ncpath)
+            if filename in file_list:
+                await self.delete_file(machine_id, ncpath+filename)
 
             files = {
                 "file": (filename, file_data, "application/octet-stream")
@@ -118,7 +122,11 @@ class MachineService:
                     machine_id=machine_id,
                     ncpath=ncpath
                 )
-        except Exception:
+        except CustomException as ce:
+            logging.info(ce)
+            raise ce
+        except Exception as e:
+            logging.info(e)
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
     async def get_machine_status(self, machine_id: int):
@@ -136,12 +144,27 @@ class MachineService:
         except Exception:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
         
+    async def delete_file(self, machine_id: int, ncpath: str):
+        try:
+            params = {'machine': machine_id, 'ncpath': ncpath}
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.delete(
+                    f"{self.gateway_base_url}/file/machine/ncpath/delete",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                result = data.get("value", [None])[0]
+                return
+        except Exception as e:
+            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR) 
+        
     async def get_current_program_name(self, machine_id: int) -> str:
         try:
             params = {'machine': machine_id, 'channel': 1}
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
-                    f"{self.gateway_base_url}/machine/channel/currentProgram/currentFile/programName",
+                    f"{self.gateway_base_url}/machine/channel/currentProgram/currentFile/programNameWithPath",
                     params=params
                 )
                 response.raise_for_status()
@@ -155,7 +178,21 @@ class MachineService:
         except Exception:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
 
+    async def get_file_list(self, machine_id: int, ncpath: str):
+        try:
+            params = {'machine': machine_id, 'ncpath': ncpath}
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.get(
+                    f"{self.gateway_base_url}/file/machine/ncpath/list",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                result = data.get("files", [None])
+                return result
 
+        except Exception:
+            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR) 
 
     async def track_all_machines_forever(self):
         tracked_machines = set()
@@ -183,6 +220,9 @@ class MachineService:
 
         while True:
             try:
+                queue_list = self.redis_tracker.get_job_queue(machine_id)
+                logger.info(f"📋 Queue for machine {machine_id}: {queue_list}")
+
                 status = await self.get_machine_status(machine_id)
                 logger.info(f"🔍 Machine {machine_id} status = {status.programMode}")
 
@@ -191,7 +231,12 @@ class MachineService:
 
                     if queue_data:
                         filename, project_id = queue_data
-                        program_name = await self.get_current_program_name(machine_id)
+                        program_path = await self.get_current_program_name(machine_id)
+                        dir_path = os.path.dirname(program_path) 
+                        program_name = os.path.basename(program_path)
+
+                        if dir_path == "//CNC_MEM/USER/LIBRARY":
+                            continue
 
                         if program_name == filename:
                             self.redis_tracker.mark_processing(project_id, filename, machine_id)
@@ -243,7 +288,7 @@ class MachineService:
                     log_doc["finish_time"] = datetime.now()
                     log_doc["finished"] = True
                     await self.product_log_collection.insert_one(log_doc)
-
+                    product_uuid = str(uuid.uuid4())
                     is_processing = False
                     log_doc = None
 
