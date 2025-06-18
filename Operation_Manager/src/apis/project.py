@@ -68,7 +68,6 @@ async def initialize_job_cache(
 @router.get("/{project_id}/nc/status")
 async def get_project_machine_status(
     project_id: str,
-    project_service: ProjectService = Depends(get_project_service)
 ):
     return RedisJobTracker().get_all_statuses(project_id)
 

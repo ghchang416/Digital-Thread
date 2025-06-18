@@ -26,13 +26,13 @@ async def get_machine_status(
 ):
     return await macine_service.get_machine_status(machine_id)
 
-@router.get("/{project_id}/job-status")
-async def get_job_status(
-    project_id: str, 
-    macine_service: MachineService = Depends(get_file_service)
-):
-    machine_list_response = await macine_service.get_machine_list()
-    machine_ids = [m.id for m in machine_list_response.machines]
+# @router.get("/{project_id}/job-status")
+# async def get_job_status(
+#     project_id: str, 
+#     macine_service: MachineService = Depends(get_file_service)
+# ):
+#     machine_list_response = await macine_service.get_machine_list()
+#     machine_ids = [m.id for m in machine_list_response.machines]
 
-    await macine_service.update_all_machine_job_status(project_id, machine_ids)
-    return macine_service.get_machine_status_info(project_id)
+#     await macine_service.update_all_machine_job_status(project_id, machine_ids)
+#     return macine_service.get_machine_status_info(project_id)
