@@ -43,9 +43,8 @@ class FileService:
     async def process_upload(self, file: UploadFile, metadata: Optional[dict] = None):
         step_content = await file.read()
         filename = file.filename
-        file_ext = file.filename.split(".")[1].lower()
         file_id = await self.repository.insert_file(step_content, filename, metadata=metadata)
-        return file_ext, file_id
+        return file_id
 
     async def file_exist(self, file_id: str):
         exists = await self.repository.file_exists(file_id)

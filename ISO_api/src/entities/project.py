@@ -7,8 +7,11 @@ class ProjectRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.project_collection = db["projects"]
 
-    async def insert_project(self, xml_string: str) -> ProjectCreateResponse:
-        project_data = {"data": xml_string}
+    async def insert_project(self, xml_string: str, its_id: str) -> ProjectCreateResponse:
+        project_data = {
+            "data": xml_string,
+            "name": its_id
+        }
         result = await self.project_collection.insert_one(project_data)
         return ProjectCreateResponse(project_id=str(result.inserted_id))
 

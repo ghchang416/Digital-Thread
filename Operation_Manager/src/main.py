@@ -1,34 +1,42 @@
 import asyncio
-import os
-from product_utils import get_toolpath_count, add_upload_toolpath_data, update_product_finish_time, upload_all_operations
-from product_manager import create_main_program
-from product_manager import monitor_cnc
-from product_utils import update_product_finish_time
-from utils import write_log
-from dlls import Torus
+from fastapi import FastAPI, Request, Depends
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from src.apis.project import router as project_router
+from src.apis.machine import router as machine_router
+from src.utils.exceptions import CustomException
+from src.database import get_grid_fs_raw, get_product_log_collection_raw
+from src.services.machine import MachineService
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("pymongo").setLevel(logging.WARNING)
+logging.getLogger("python_multipart").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+async def start_tracking_all_machines():
+    grid_fs = get_grid_fs_raw()
+    product_log_collection = get_product_log_collection_raw()
+    machine_service = MachineService(grid_fs, product_log_collection)
+    asyncio.create_task(machine_service.track_all_machines_forever())
     
-async def main():
-    project_id = "P188164"
-    project_name = "4path"
-    # vm_result_path = json_path + "\\VM\\" + name + "\\" + name + "\\result" 에 사용
-    start_no = 0
-    torus = Torus()
+@app.exception_handler(CustomException)
+async def custom_exception_handler(request: Request, exc: CustomException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 
-    toolpath_count = get_toolpath_count(project_id)
-
-    # main program 생성 및 업로드
-    create_main_program(start_no, toolpath_count, project_id, torus)
-    upload_data_names = add_upload_toolpath_data(start_no, toolpath_count)
-
-    # # 각 operation 별 파일 업로드
-    upload_all_operations(project_id, start_no + 1, torus)
-    write_log("UPLOAD COMPLETE")
-
-    write_log("BACKGROUND WORKER RUN")
-    product_id = await monitor_cnc(torus, project_id, toolpath_count, upload_data_names)
-
-    write_log("PRODUCT CUTTING FINISH")
-    update_product_finish_time(project_id, product_id)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+app.include_router(project_router)
+app.include_router(machine_router)

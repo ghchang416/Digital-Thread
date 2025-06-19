@@ -18,8 +18,9 @@ class ProjectService:
 
     async def create_project(self, xml_string: str):
         xml_dict = self.xml_to_dict(xml_string)
+        its_id = xml_dict["project"]["its_id"]
         xml_string = self.save_xml_data(xml_dict)
-        project_data = await self.repository.insert_project(xml_string)
+        project_data = await self.repository.insert_project(xml_string, its_id)
         if not project_data:
             raise CustomException(ExceptionEnum.PROJECT_CREATION_FAILED)
         return project_data
@@ -159,6 +160,9 @@ class ProjectService:
             project["project"]["main_workplan"] = {"its_elements": []}
         elif "its_elements" not in project["project"]["main_workplan"]:
             project["project"]["main_workplan"]["its_elements"] = []
+        
+        if not isinstance(project["project"]["main_workplan"]["its_elements"], list):
+            project["project"]["main_workplan"]["its_elements"] = [project["project"]["main_workplan"]["its_elements"]]
 
         if cam_type == "nx":
             for data in parsed_data['values']:

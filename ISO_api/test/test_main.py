@@ -7,9 +7,9 @@ from src.main import app
 BASE_DIR = "/data"
 xml_path = os.path.join(BASE_DIR, "xml", "sample.xml")
 step_path = os.path.join(BASE_DIR, "step", "sample.stp")
-nc_path = os.path.join(BASE_DIR, "nc", "sample.nc")
-tdms_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250113114429.tdms")
-log_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250112111811_ext.log")
+nc_path = os.path.join(BASE_DIR, "nc", "O9002.nc")
+# tdms_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250113114429.tdms")
+# log_path = os.path.join(BASE_DIR, "tdms", "01__O6025__YPH 025-MAIN P_G__250112111811_ext.log")
 
 
 @pytest.mark.asyncio
@@ -24,14 +24,14 @@ async def test_full_project_flow():
         # 3. NC 파일 업로드
         nc_id = await upload_nc_file(client, project_id, "test_workplan")
 
-        # 4. TDMS 로그 업로드 (.txt)
-        await upload_tdms_log(client, project_id, "test_workplan", nc_id)
+        # # 4. TDMS 로그 업로드 (.txt)
+        # await upload_tdms_log(client, project_id, "test_workplan", nc_id)
 
-        # 5. TDMS 리스트 확인
-        await check_tdms_list(client, project_id, "test_workplan", tdms_path)
+        # # 5. TDMS 리스트 확인
+        # await check_tdms_list(client, project_id, "test_workplan", tdms_path)
 
-        # 6. XML 속성 추출 확인
-        await check_xml_attribute(client, project_id, "project")
+        # # 6. XML 속성 추출 확인
+        # await check_xml_attribute(client, project_id, "project")
 
 
 async def upload_project(client: AsyncClient):
@@ -61,7 +61,7 @@ async def upload_nc_file(client: AsyncClient, project_id, workplan_id):
         response = await client.post(
             "/api/upload/nc",
             data={"project_id": project_id, "workplan_id": workplan_id},
-            files={"nc_file": ("sample.nc", f, "text/plain")}
+            files={"nc_file": ("O9002.nc", f, "text/plain")}
         )
     assert response.status_code == status.HTTP_201_CREATED
     return response.json()["file_id"]

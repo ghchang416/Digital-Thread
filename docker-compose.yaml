@@ -1,17 +1,6 @@
 version: '3.8'
 
 services:
-  dll-server:
-    build:
-      context: ./CS_WrapAPI
-    container_name: dll_server
-    ports:
-      - "8010:8010"
-    volumes:
-      - ./CS_WrapAPI:/dll/
-    networks:
-      - kitech_network
-
   mongo:
     image: mongo:latest
     container_name: mongo_container
@@ -41,6 +30,28 @@ services:
     environment:
       PYTHONUNBUFFERED: 1
       DLL_URI: ${DLL_URI}
+    networks:
+      - kitech_network
+
+  om:
+    build:
+      context: ./Operation_Manager
+    container_name: operation_manager
+    volumes:
+      - ./Operation_Manager:/app
+    ports:
+      - "8888:8000"
+    environment:
+      PYTHONUNBUFFERED: 1
+    networks:
+      - kitech_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis_container
+    restart: always
+    ports:
+      - "6379:6379"
     networks:
       - kitech_network
 

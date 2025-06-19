@@ -44,7 +44,7 @@ async def upload_nc_file(
     - **반환값**: 업로드된 NC 파일의 ID
     """
     project = await project_service.get_project_by_id(project_id)
-    file_ext, file_id = await file_service.process_upload(nc_file)
+    file_id = await file_service.process_upload(nc_file)
     await project_service.nc_upload(project, workplan_id, file_id)
     return FileCreateResponse(file_id=file_id)
 
@@ -65,7 +65,7 @@ async def upload_virtual_machine_file(
     """
     project = await project_service.get_project_by_id(project_id)
     await file_service.file_exist(nc_code_id)
-    file_ext, file_id = await file_service.process_upload(
+    file_id = await file_service.process_upload(
         vm_file, {"nc_code": nc_code_id}
     )
     await project_service.vm_upload(project, workplan_id, file_id)
@@ -89,7 +89,7 @@ async def upload_tdms_path_log(
     """
     project = await project_service.get_project_by_id(project_id)
     await file_service.file_exist(nc_code_id)
-    file_ext, file_id = await file_service.process_upload(
+    file_id = await file_service.process_upload(
         log_file, {"nc_code": nc_code_id}
     )
     await project_service.tdms_upload(project, workplan_id, file_id, tdms_path)

@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+numpy
+xsdata
+httpx
+Jinja2
+requests
+xmltodict
+lxml
+python-multipart
+python-dotenv
+aiofiles
+chardet
+motor
+redis

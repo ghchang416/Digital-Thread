@@ -1,0 +1,35 @@
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase, AsyncIOMotorCollection
+from dotenv import load_dotenv
+from functools import lru_cache
+from fastapi import Depends
+import os
+
+load_dotenv()
+
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://mongo:27017")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "iso14649")
+
+@lru_cache()
+def get_motor_client() -> AsyncIOMotorClient:
+    return AsyncIOMotorClient(MONGO_URL)
+
+async def get_db() -> AsyncIOMotorDatabase:
+    return get_motor_client()[DATABASE_NAME]
+
+async def get_project_collection(db: AsyncIOMotorDatabase = Depends(get_db)):
+    return db["projects"]
+
+async def get_product_log_collection(db: AsyncIOMotorDatabase = Depends(get_db)):
+    return db["product_logs"]
+
+async def get_grid_fs(db: AsyncIOMotorDatabase = Depends(get_db)):
+    return AsyncIOMotorGridFSBucket(db, bucket_name="files")
+
+def get_db_raw() -> AsyncIOMotorDatabase:
+    return get_motor_client()[DATABASE_NAME]
+
+def get_product_log_collection_raw() -> AsyncIOMotorCollection:
+    return get_db_raw()["product_logs"]
+
+def get_grid_fs_raw() -> AsyncIOMotorGridFSBucket:
+    return AsyncIOMotorGridFSBucket(get_db_raw(), bucket_name="files")
