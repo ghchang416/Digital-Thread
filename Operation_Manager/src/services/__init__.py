@@ -1,18 +1,20 @@
-from fastapi import Depends
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorCollection 
 from src.services.project import ProjectService
 from src.services.machine import MachineService
-from src.database import get_grid_fs, get_project_collection, get_product_log_collection
+from src.repositories import (
+    ProjectRepository, FileRepository, RedisRepository, MachineLogRepository, MachineRepository,
+    get_log_repository, get_file_repository, get_machine_repository, get_project_repository, get_redis_repository
+)
 
-async def get_project_service(
-    collection: AsyncIOMotorCollection = Depends(get_project_collection),
-    grid_fs: AsyncIOMotorGridFSBucket = Depends(get_grid_fs),
-    product_log_collection: AsyncIOMotorCollection = Depends(get_product_log_collection)
-):
-    return ProjectService(collection, grid_fs, product_log_collection)
+async def get_project_service():
+    project_repo: ProjectRepository = await get_project_repository()
+    log_repo: MachineLogRepository = await get_log_repository()
+    file_repo: FileRepository = await get_file_repository()
+    redis_repo: RedisRepository = await get_redis_repository()
+    return ProjectService(project_repo, file_repo, log_repo, redis_repo)
 
-async def get_file_service(
-    grid_fs: AsyncIOMotorGridFSBucket = Depends(get_grid_fs),
-    product_log_collection: AsyncIOMotorCollection = Depends(get_product_log_collection)
-):
-    return MachineService(grid_fs, product_log_collection)
+async def get_machine_service():
+    machine_repo: MachineRepository = await get_machine_repository()
+    file_repo: FileRepository = await get_file_repository()
+    log_repo: MachineLogRepository = await get_log_repository()
+    redis_repo: RedisRepository = await get_redis_repository()
+    return MachineService(machine_repo, file_repo, log_repo, redis_repo)

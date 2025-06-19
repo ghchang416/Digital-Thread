@@ -1,7 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from src.schemas.project import ProductLogResponse, ProjectSearchFilter, ProjectListResponse, NcCodeUpdateRequest, NCCodeResponse, WorkplanNCResponse
-from src.services import ProjectService, get_project_service, MachineService, get_file_service
-from src.services.redis import RedisJobTracker
+from src.services import ProjectService, get_project_service
 
 router = APIRouter(prefix="/api/projects", tags=["Project Management"])
 
@@ -60,7 +59,7 @@ async def initialize_job_cache(
     result = await project_service.extract_workplan_and_nc(project_id)
     nc_filenames = [r.filename for r in result.results if r.filename]
 
-    RedisJobTracker().initialize_project_cache(project_id, nc_filenames)
+    project_service.initialize_project_cache(project_id, nc_filenames)
 
     return {"message": "Redis 캐시 초기화 "}
 
@@ -68,6 +67,7 @@ async def initialize_job_cache(
 @router.get("/{project_id}/nc/status")
 async def get_project_machine_status(
     project_id: str,
+    project_service: ProjectService = Depends(get_project_service),
 ):
-    return RedisJobTracker().get_all_statuses(project_id)
+    return project_service.get_all_statuses(project_id)
 

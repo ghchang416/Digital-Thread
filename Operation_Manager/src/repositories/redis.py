@@ -2,9 +2,9 @@ import redis
 from datetime import datetime
 from typing import Optional, Dict
 
-class RedisJobTracker:
-    def __init__(self):
-        self.redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+class RedisRepository:
+    def __init__(self, host, port):
+        self.redis_client = redis.Redis(host=host, port=port, decode_responses=True)
 
     def initialize_project_cache(self, project_id: str, nc_file_list: list[str]):
         """
@@ -19,7 +19,7 @@ class RedisJobTracker:
                     "upload_time": ""
                 })
 
-    def _set_status(self, project_id: str, filename: str, machine_id: int, status: str):
+    def set_status(self, project_id: str, filename: str, machine_id: int, status: str):
         status_key = f"status:{project_id}:{filename}:{machine_id}"
         self.redis_client.hset(status_key, mapping={
             "status": status,
@@ -27,10 +27,10 @@ class RedisJobTracker:
         })
 
     def mark_processing(self, project_id: str, filename: str, machine_id: int):
-        self._set_status(project_id, filename, machine_id, "가공 중")
+        self.set_status(project_id, filename, machine_id, "가공 중")
 
     def mark_finished(self, project_id: str, filename: str, machine_id: int):
-        self._set_status(project_id, filename, machine_id, "가공 완료")
+        self.set_status(project_id, filename, machine_id, "가공 완료")
 
     def get_all_statuses(self, project_id: str) -> Dict[str, Dict[str, dict]]:
         """

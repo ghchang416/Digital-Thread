@@ -45,6 +45,8 @@ services:
       PYTHONUNBUFFERED: 1
     networks:
       - kitech_network
+    extra_hosts:
+      - "host.docker.internal:10.170.27.45"
 
   redis:
     image: redis:7-alpine

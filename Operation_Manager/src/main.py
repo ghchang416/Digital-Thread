@@ -5,14 +5,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.apis.project import router as project_router
 from src.apis.machine import router as machine_router
 from src.utils.exceptions import CustomException
-from src.database import get_grid_fs_raw, get_product_log_collection_raw
-from src.services.machine import MachineService
+from src.services import MachineService, get_machine_service
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
 logging.getLogger("python_multipart").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+logger = logging.getLogger("Operation_Manager")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 app = FastAPI()
 
@@ -26,9 +32,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def start_tracking_all_machines():
-    grid_fs = get_grid_fs_raw()
-    product_log_collection = get_product_log_collection_raw()
-    machine_service = MachineService(grid_fs, product_log_collection)
+    machine_service: MachineService = await get_machine_service()
     asyncio.create_task(machine_service.track_all_machines_forever())
     
 @app.exception_handler(CustomException)
