@@ -6,8 +6,10 @@ from src.apis import router as dll_router
 
 logging.basicConfig(level=logging.INFO)
 
+# FastAPI 앱 생성
 app = FastAPI()
 
+# 커스텀 예외 핸들러 등록 (커스텀 예외 발생 시 일관된 에러 응답)
 @app.exception_handler(CustomException)
 async def custom_exception_handler(request: Request, exc: CustomException):
     return JSONResponse(
@@ -15,4 +17,5 @@ async def custom_exception_handler(request: Request, exc: CustomException):
         content={"detail": exc.detail},
     )
 
+# DLL API 라우터 등록
 app.include_router(dll_router)

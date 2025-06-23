@@ -1,0 +1,12 @@
+numpy
+scipy==1.10.1
+pandas
+scikit-learn==1.1.2
+matplotlib
+pyyaml
+pycaret==3.2.0
+torch
+torchvision
+mlflow
+pika
+tsfel

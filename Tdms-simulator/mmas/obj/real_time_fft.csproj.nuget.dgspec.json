@@ -1,0 +1,107 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\Gyeonghyun\\Documents\\workspace\\Digital-Thread\\Tdms-simulator\\mmas\\real_time_fft.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\Gyeonghyun\\Documents\\workspace\\Digital-Thread\\Tdms-simulator\\mmas\\real_time_fft.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\Gyeonghyun\\Documents\\workspace\\Digital-Thread\\Tdms-simulator\\mmas\\real_time_fft.csproj",
+        "projectName": "real_time_fft",
+        "projectPath": "C:\\Users\\Gyeonghyun\\Documents\\workspace\\Digital-Thread\\Tdms-simulator\\mmas\\real_time_fft.csproj",
+        "packagesPath": "C:\\Users\\Gyeonghyun\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\Gyeonghyun\\Documents\\workspace\\Digital-Thread\\Tdms-simulator\\mmas\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\Gyeonghyun\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net9.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net9.0": {
+            "targetAlias": "net9.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.100"
+      },
+      "frameworks": {
+        "net9.0": {
+          "targetAlias": "net9.0",
+          "dependencies": {
+            "Google.Protobuf": {
+              "target": "Package",
+              "version": "[3.30.0, )"
+            },
+            "Grpc.AspNetCore": {
+              "target": "Package",
+              "version": "[2.32.0, )"
+            },
+            "Grpc.Net.Client": {
+              "target": "Package",
+              "version": "[2.67.0, )"
+            },
+            "Grpc.Tools": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.70.0, )"
+            },
+            "MQTTnet": {
+              "target": "Package",
+              "version": "[4.1.4.563, )"
+            },
+            "MQTTnet.Extensions.ManagedClient": {
+              "target": "Package",
+              "version": "[4.1.4.563, )"
+            },
+            "RabbitMQ.Client": {
+              "target": "Package",
+              "version": "[7.0.0, )"
+            },
+            "TDMSReader": {
+              "target": "Package",
+              "version": "[3.1.0, )"
+            },
+            "WebSocket4Net": {
+              "target": "Package",
+              "version": "[0.15.2, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.107/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

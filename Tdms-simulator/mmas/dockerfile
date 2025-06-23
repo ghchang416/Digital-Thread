@@ -1,0 +1,11 @@
+FROM mcr.microsoft.com/dotnet/sdk:9.0
+
+# Install dependencies
+RUN apt-get update && apt-get install -y wget ca-certificates
+
+COPY . /mmsa/
+
+WORKDIR /mmsa
+
+# 컨테이너가 종료되지 않도록 무한 루프 실행
+CMD ["tail", "-f", "/dev/null"]

@@ -1,0 +1,67 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.0-management
+    container_name: message_broker
+    ports:
+      - "5672:5672"  
+      - "15672:15672"
+    networks:
+      - kitech_network
+
+
+  db:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: mlflow
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - kitech_network
+
+  mlflow:
+    build: ./ai-server
+    container_name: mlflow
+    ports:
+      - "8005:5000"
+    volumes:
+      - ./ai-server:/app
+    environment:
+      - GIT_PYTHON_REFRESH=quiet
+      - MLFLOW_TRACKING_URI=http://0.0.0.0:5000
+      - BACKEND_STORE_URI=mysql+pymysql://root:rootpassword@db/mlflow
+    command: >
+      /bin/sh -c "pip install pymysql cryptography &&
+      mlflow server --backend-store-uri mysql+pymysql://root:rootpassword@db/mlflow --default-artifact-root /app --host 0.0.0.0 --port 5000"
+    depends_on:
+      - db
+    networks:
+      - kitech_network
+
+  mmsa:
+    build: ./mmas
+    volumes:
+      - ./mmas:/App
+    networks:
+      - kitech_network
+
+  grpc:
+    build: ./grpc
+    ports: 
+      - "50051:50051"
+    volumes:
+      - ./grpc:/app
+      - ../data:/data
+    networks:
+      - kitech_network
+
+volumes:
+  db_data:
+
+networks:
+  kitech_network:
+    external: true
+    name: kitech_network

@@ -1,0 +1,11 @@
+tdms:
+  directory: "/app/tdms_files/"
+  file_name: "01__O6025__YPH 025-MAIN P_G__250113115332.tdms"
+
+rabbitmq:
+  host: "rabbitmq"
+  raw_data_queue: "data_queue"
+  result_queue: "result_queue"
+
+processing:
+  chunk_size: 10

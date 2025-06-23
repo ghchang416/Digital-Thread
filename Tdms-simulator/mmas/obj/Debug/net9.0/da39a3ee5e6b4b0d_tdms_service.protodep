@@ -1,0 +1,2 @@
+obj\Debug\net9.0/TdmsService.cs \
+obj\Debug\net9.0/TdmsServiceGrpc.cs: tdms_service.proto

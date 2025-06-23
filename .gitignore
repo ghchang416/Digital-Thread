@@ -4,9 +4,11 @@ __pycache__
 
 .venv
 
-# torus 아직 미완성
 Projects/
 torus_dll/
 Digital-Thread.sln
 
 data/
+.vs
+.vscode
+Release/

@@ -5,10 +5,14 @@ from src.services import get_file_service, FileService, ProjectService, get_proj
 from src.schemas.file import FileCreateResponse, StpCreateResponse
 from src.utils.exceptions import CustomException, ExceptionEnum
 
+# 변환 관련 API 엔드포인트를 담당하는 FastAPI Router입니다.
 router = APIRouter(prefix="/api/convert", tags=["STP Convert"])
 
 """
-==============================================  파일 변환 API ==============================================
+==============================================
+   파일 변환 관련 API (STEP → CAD, GD&T)
+   - STEP 파일을 CAD 또는 GD&T 형태로 변환하는 엔드포인트 제공
+==============================================
 """
 
 @router.get("/cad", status_code=200, summary="STEP to CAD 변환")
@@ -18,6 +22,18 @@ async def convert_from_step_to_cad(
     project_service: ProjectService = Depends(get_project_service),
     file_service: FileService = Depends(get_file_service),
 ):
+    """
+    STEP 파일을 CAD 포맷(json)으로 변환합니다.
+
+    Args:
+        project_id (str): 변환 대상 프로젝트 ID
+        stp_id (str): 변환 대상 STEP 파일 ID
+        project_service (ProjectService): 프로젝트 데이터 서비스 DI
+        file_service (FileService): 파일 변환 서비스 DI
+
+    Returns:
+        dict: CAD 포맷 변환 결과(json)
+    """
     project: dict | None = await project_service.get_project_by_id(project_id)
     if not project.get("step_id"):
         raise CustomException(ExceptionEnum.STP_NOT_FOUND)
@@ -34,6 +50,18 @@ async def convert_from_step_to_gdt(
     project_service: ProjectService = Depends(get_project_service),
     file_service: FileService = Depends(get_file_service),
 ):
+    """
+    STEP 파일을 GD&T 포맷(json)으로 변환합니다.
+
+    Args:
+        project_id (str): 변환 대상 프로젝트 ID
+        stp_id (str): 변환 대상 STEP 파일 ID
+        project_service (ProjectService): 프로젝트 데이터 서비스 DI
+        file_service (FileService): 파일 변환 서비스 DI
+
+    Returns:
+        dict: GD&T 포맷 변환 결과(json)
+    """
     project: dict | None = await project_service.get_project_by_id(project_id)
     if not project.get("step_id"):
         raise CustomException(ExceptionEnum.STP_NOT_FOUND)
