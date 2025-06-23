@@ -11,6 +11,7 @@ python-dotenv
 aiofiles
 chardet
 motor
+fastapi-mcp
 
 pytest
 pytest-asyncio

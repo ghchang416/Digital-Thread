@@ -14,6 +14,10 @@ from OCC.Core.StlAPI import StlAPI_Writer
 from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 from OCC.Core.IFSelect import IFSelect_RetDone
 from dotenv import load_dotenv
+from bson.objectid import ObjectId, InvalidId
+import gridfs
+import logging
+import asyncio
 
 load_dotenv()
 
@@ -27,25 +31,42 @@ class FileService:
     def __init__(self, grid_fs: AsyncIOMotorGridFSBucket):
         # 파일 저장/조회 등 실제 DB 작업은 FileRepository가 담당 (의존성 주입)
         self.repository = FileRepository(grid_fs)
-        
+
     async def delete_project_files(self, project: dict):
         """
         프로젝트 정보 내 연결된 파일 ObjectId 리스트를 추출해 전부 삭제.
         (프로젝트 내 여러 파일 종류별로 관리)
         """
+        def is_valid_objectid(value):
+            try:
+                ObjectId(value)
+                return True
+            except (InvalidId, TypeError):
+                return False
+
         file_ids = []
         for key, value in project.items():
-            if key not in ["_id", "data"]:  # _id, data 제외
-                if isinstance(value, list):
-                    file_ids.extend(value)
-                else:
-                    file_ids.append(value) 
+            if key not in ["_id", "data"]:
+                vals = value if isinstance(value, list) else [value]
+                for v in vals:
+                    if is_valid_objectid(v):
+                        file_ids.append(v)
+                    else:
+                        logging.warning(f"[delete_project_files] 무시되는 잘못된 파일ID: {v} (field: {key})")
 
-        delete_tasks = [self.repository.delete_file_by_id(file_id) for file_id in file_ids]
-        # 비동기로 병렬 삭제
-        deleted_files = await asyncio.gather(*delete_tasks)
+        # 각 파일 삭제시, 없는 파일은 무시 (NoFile 예외 개별 처리)
+        async def safe_delete(file_id):
+            try:
+                await self.repository.delete_file_by_id(file_id)
+            except gridfs.errors.NoFile:
+                logging.info(f"[delete_file_by_id] 파일이 존재하지 않음: {file_id}")
+            except Exception as e:
+                logging.error(f"[delete_file_by_id] 삭제 중 알 수 없는 에러: {file_id} / {e}")
+
+        delete_tasks = [safe_delete(file_id) for file_id in file_ids]
+        await asyncio.gather(*delete_tasks)
         return
-    
+
     async def delete_file_by_id(self, file_id: str):
         """파일 ObjectId로 해당 파일을 삭제."""
         await self.repository.delete_file_by_id(file_id)
