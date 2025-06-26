@@ -1,4 +1,5 @@
 import httpx
+import logging
 from src.utils.exceptions import CustomException, ExceptionEnum
 
 class MachineRepository:
@@ -62,20 +63,20 @@ class MachineRepository:
         try:
             params = {
                 "machine": machine_id,
-                "path": path
+                "ncpath": path
             }
             async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(f"{self.base_url}/file/exists", params=params)
+                response = await client.get(f"{self.base_url}/file/machine/ncpath/exists", params=params)
                 response.raise_for_status()
                 result = response.json()
-                exists = result.get("exists", False)
+                exists = result.get("values", [False])[0]
                 if not exists:
                     payload = {
                         "machine": machine_id,
-                        "ncpath": path
+                        "ncpath": path[:-1]
                     }
                     create_response = await client.post(
-                        f"{self.base_url}/file/machine/createfolder", json=payload
+                        f"{self.base_url}/file/machine/ncpath/mkdir", json=payload
                     )
                     create_response.raise_for_status()
                     create_result = create_response.json()

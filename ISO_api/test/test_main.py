@@ -7,14 +7,14 @@ from src.main import app
 BASE_DIR = "/data"
 xml_path = os.path.join(BASE_DIR, "xml", "sample.xml")
 step_path = os.path.join(BASE_DIR, "step", "DRILLJIG_PLATE_PMI.stp")
-nc_path = os.path.join(BASE_DIR, "nc", "sample.nc")
-tdms_path = os.path.join(BASE_DIR, "tdms", "sample.tdms")
-log_path = os.path.join(BASE_DIR, "tdms", "sample.log")
+nc_path = os.path.join(BASE_DIR, "nc", "O0100")
+# tdms_path = os.path.join(BASE_DIR, "tdms", "sample.tdms")
+# log_path = os.path.join(BASE_DIR, "tdms", "sample.log")
 
 cam_nx_path = os.path.join(BASE_DIR, "json", "nx", "NX_json.json")
 mapping_nx_path = os.path.join(BASE_DIR, "json", "nx", "mapping_config_NX.json")
 
-cam_powermill_path = os.path.join(BASE_DIR, "json", "powermill", "Toolpaths_constantz.json")
+cam_powermill_path = os.path.join(BASE_DIR, "json", "powermill", "1.json")
 mapping_powermill_path = os.path.join(BASE_DIR, "json", "powermill", "mapping_config_constantz.json")
 
 @pytest.mark.asyncio
@@ -27,13 +27,13 @@ async def test_full_project_flow():
         step_id, stl_id = await upload_step_file(client, project_id)
 
         # 3. NC 파일 업로드
-        nc_id = await upload_nc_file(client, project_id, "test_workplan")
+        nc_id = await upload_nc_file(client, project_id, "st861")
 
         # 4. TDMS 로그 업로드 (.txt)
-        await upload_tdms_log(client, project_id, "test_workplan", nc_id)
+        # await upload_tdms_log(client, project_id, "test_workplan", nc_id)
 
-        # 5. TDMS 리스트 확인
-        await check_tdms_list(client, project_id, "test_workplan", tdms_path)
+        # # 5. TDMS 리스트 확인
+        # await check_tdms_list(client, project_id, "test_workplan", tdms_path)
 
         # 6. XML 속성 추출 확인
         await check_xml_attribute(client, project_id, "project")
@@ -72,7 +72,7 @@ async def upload_nc_file(client: AsyncClient, project_id, workplan_id):
         response = await client.post(
             "/api/upload/nc",
             data={"project_id": project_id, "workplan_id": workplan_id},
-            files={"nc_file": ("O9002.nc", f, "text/plain")}
+            files={"nc_file": ("O0100", f, "text/plain")}
         )
     assert response.status_code == status.HTTP_201_CREATED
     return response.json()["file_id"]

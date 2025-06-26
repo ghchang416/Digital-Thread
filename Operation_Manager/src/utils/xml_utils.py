@@ -70,6 +70,14 @@ def verify_nc_code_in_workplan(data_dict: dict, workplan_id: str, nc_code_id: st
     main_workplan = data_dict['project'].get("main_workplan")
     if not main_workplan:
         return False
+    
+    # main_workplan 자체가 해당 workplan일 경우도 체크
+    if main_workplan.get("its_id") == workplan_id:
+        nc_codes = main_workplan.get("nc_code", [])
+        if isinstance(nc_codes, dict):
+            nc_codes = [nc_codes]
+        return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
+    
     elements = main_workplan.get("its_elements", [])
     if not isinstance(elements, list):
         elements = [elements]
@@ -79,12 +87,6 @@ def verify_nc_code_in_workplan(data_dict: dict, workplan_id: str, nc_code_id: st
             if isinstance(nc_codes, dict):
                 nc_codes = [nc_codes]
             return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
-    # main_workplan 자체가 해당 workplan일 경우도 체크
-    if main_workplan.get("its_id") == workplan_id:
-        nc_codes = main_workplan.get("nc_code", [])
-        if isinstance(nc_codes, dict):
-            nc_codes = [nc_codes]
-        return any(nc.get("its_id") == nc_code_id for nc in nc_codes)
     return False
 
 def update_nc_code_id_in_workplan(

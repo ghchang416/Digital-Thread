@@ -137,14 +137,29 @@ class ProjectService:
         """
         프로젝트별 NC파일 상태(가공/완료 등) 전체 반환 (Redis 기반).
         :param project_id: 프로젝트 ID
-        :return: 파일별 상태 딕셔너리
+        :return: 파일명 → 머신별 → 상태 및 업로드 시간 딕셔너리
         """
         pattern = f"status:{project_id}:*"
         keys = self.redis_repo.redis_client.keys(pattern)
         statuses = {}
+
         for key in keys:
-            fname = key.split(":")[-1]
+            try:
+                _, pid, filename, machine_id = key.split(":", 3)
+            except ValueError:
+                # 예상 외 형식 무시
+                continue
+
             status = self.redis_repo.redis_client.hget(key, "status") or "알 수 없음"
-            machine_id = self.redis_repo.redis_client.hget(key, "machine_id") or "알 수 없음"
-            statuses[fname] = {"status": status, "machine_id": machine_id}
-        return {"statuses": statuses}
+            upload_time = self.redis_repo.redis_client.hget(key, "upload_time") or "알 수 없음"
+
+            # 파일 이름 → 머신 ID → 상태/시간 구조
+            if filename not in statuses:
+                statuses[filename] = {}
+            statuses[filename][machine_id] = {
+                "status": status,
+                "upload_time": upload_time
+            }
+
+        return statuses
+

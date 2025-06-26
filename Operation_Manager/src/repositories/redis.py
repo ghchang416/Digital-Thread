@@ -59,13 +59,16 @@ class RedisRepository:
             result[filename][machine_id] = entry
         return result
 
-    def find_project_id_by_filename(self, filename: str) -> Optional[str]:
+    def find_project_id_by_filename(self, filename: str, machine_id: int):
         """
         실행 중인 파일명 기준으로 project_id 추출
+        Redis 키 형식: status:{project_id}:{filename}:{machine_id}
         """
-        keys = self.redis_client.keys(f"status:*:{filename}:*")
+        pattern = f"status:*:{filename}:*"
+        keys = self.redis_client.keys(pattern)
+
         for key in keys:
             parts = key.split(":")
-            if len(parts) >= 3:
+            if len(parts) == 4 and parts[2] == filename and parts[3] == str(machine_id):
                 return parts[1]  # project_id
         return None

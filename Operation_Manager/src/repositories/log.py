@@ -24,8 +24,6 @@ class MachineLogRepository:
         try:
             cursor = self.collection.find({"project_id": project_id})
             logs = await cursor.to_list(length=None)
-            if not logs:
-                raise CustomException(ExceptionEnum.LOG_NOT_FOUND)
             return logs
         except CustomException:
             raise

@@ -41,6 +41,7 @@ services:
       - ./Operation_Manager:/app
     ports:
       - "8888:8000"
+      - "8050:8050"
     environment:
       PYTHONUNBUFFERED: 1
     networks:

@@ -28,7 +28,7 @@ async def get_machine_repository() -> MachineRepository:
     Torus Gateway 외부 API와 연동하는 머신 리포지토리 반환.
     환경 변수 TORUS_GATEWAY_URL 사용
     """
-    torus_url = os.getenv("TORUS_GATEWAY_URL", "http://host.docker.internal:5001")
+    torus_url = os.getenv("TORUS_GATEWAY_URL", "http://10.10.10.49:5001")
     return MachineRepository(torus_url)
 
 # --- 파일(GridFS) 리포지토리 반환 ---
