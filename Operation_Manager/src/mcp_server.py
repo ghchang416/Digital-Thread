@@ -17,7 +17,13 @@ async def setup_tools():
     mcp.tool(project_service.get_product_logs_by_project_id)
     mcp.tool(project_service.get_machine_status_info)
     
-import asyncio
-asyncio.run(setup_tools()) 
+# import asyncio
+# asyncio.run(setup_tools()) 
+# mcp.run(transport="sse", port=8050, host="0.0.0.0")
 
-mcp.run(transport="sse", port=8050, host="0.0.0.0")
+async def run_mcp():
+    await setup_tools()            
+    await mcp.run_async(transport="sse", port=8050, host="0.0.0.0")
+
+import anyio
+anyio.run(run_mcp)
