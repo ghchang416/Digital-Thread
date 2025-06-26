@@ -43,6 +43,16 @@ class MachineService:
         machines = [MachineInfo(**item) for item in raw_list]
         return MachineListResponse(machines=machines)
 
+    async def get_machine_data(self, endpoint: str, params: dict = None):
+        """
+        임의의 endpoint로부터 데이터를 조회합니다. LLM tool 호출 가능.
+        
+        :param endpoint: base_url 뒤에 붙는 경로 (예: "/machine/list")
+        :param params: GET 요청에 사용할 쿼리 파라미터
+        :return: 응답 데이터 value 또는 전체 json
+        """
+        return await self.machine_repo.get_data(endpoint, params)
+
     async def upload_torus_file(self, project_id: str, machine_id: int, file_id: str) -> MachineFileUploadResponse:
         """
         NC 파일을 장비로 업로드 (중복 파일 삭제, 폴더 생성, 포맷 검증 등 포함).
@@ -56,8 +66,10 @@ class MachineService:
         file_data = byte_io.read()
         # 2. NC 루트 경로 및 작업 폴더 경로 확보
         ncpath_root = await self.machine_repo.get_nc_root_path(machine_id)
-        # project_folder_path = f"{ncpath_root}{project_id}/"
-        project_folder_path = f"{ncpath_root}"
+        project_folder_path = f"{ncpath_root}OM/"
+        await self.machine_repo.ensure_folder_exists(machine_id, project_folder_path)
+        
+        project_folder_path = project_folder_path + f"{project_id}/"
 
         # 3. 해당 장비 정보 확인
         machines: MachineListResponse = await self.get_machine_list()
@@ -76,7 +88,7 @@ class MachineService:
                 raise CustomException(ExceptionEnum.INVALID_FILE_NAME_FORMAT)
 
         # 5. 폴더 생성 및 동일 파일 삭제, 파일 업로드
-        # await self.machine_repo.ensure_folder_exists(machine_id, project_folder_path)
+        await self.machine_repo.ensure_folder_exists(machine_id, project_folder_path)
         await self.machine_repo.remove_file_if_exists(machine_id, project_folder_path, filename)
         await self.machine_repo.put_nc_file(machine_id, project_folder_path, filename, file_data)
         self.job_tracker.set_status(project_id, filename, machine_id, "가공 대기")

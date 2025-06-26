@@ -31,6 +31,29 @@ class MachineRepository:
         except Exception as e:
             raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR, detail=str(e))
 
+    async def get_data(self, endpoint: str, params: dict = None):
+        """
+        주어진 endpoint 경로로 GET 요청을 전송하여 데이터를 반환합니다.
+        
+        :param endpoint: base_url 뒤에 붙는 API 경로 (예: '/machine/list')
+        :param params: 요청 파라미터 (dict)
+        :raises CustomException: API 호출 실패 또는 상태 오류 시
+        :return: 응답 데이터의 value 필드 또는 전체 json
+        """
+        try:
+            url = f"{self.base_url}{endpoint}"
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                status = data.get("status", 0)
+                if status != 0:
+                    raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
+                return data.get("value", data)
+        except Exception as e:
+            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR, detail=str(e))
+
+
     async def get_nc_root_path(self, machine_id: int):
         """
         지정한 장비의 NC 파일 최상위 루트 경로 반환.
@@ -69,7 +92,7 @@ class MachineRepository:
                 response = await client.get(f"{self.base_url}/file/machine/ncpath/exists", params=params)
                 response.raise_for_status()
                 result = response.json()
-                exists = result.get("values", [False])[0]
+                exists = result.get("value", [False])[0]
                 if not exists:
                     payload = {
                         "machine": machine_id,
