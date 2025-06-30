@@ -1,0 +1,7 @@
+rabbitmq:
+  host: "rabbitmq"
+  raw_data_queue: "data_queue"
+  result_queue: "result_queue"
+
+mlflow:
+  model_uri: "models:/mlp/3"

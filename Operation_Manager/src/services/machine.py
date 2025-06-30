@@ -1,305 +1,217 @@
 import asyncio
 from datetime import datetime
-import os
 import re
+import os
 import uuid
-import httpx
-from src.services.redis import RedisJobTracker
-from fastapi import BackgroundTasks
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorCollection
-from src.schemas.machine import MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse
-from src.entities.file import FileRepository
+import logging
+from src.repositories import MachineRepository, FileRepository, MachineLogRepository, RedisRepository
+from src.schemas.machine import (
+    MachineFileUploadResponse, MachineListResponse, MachineProgramStatusResponse, MachineInfo
+)
 from src.utils.exceptions import CustomException, ExceptionEnum
 import logging
 
-logger = logging.getLogger("machine_tracker")
-logging.basicConfig(
-    level=logging.INFO,  # info 로그까지 보이도록 설정
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-
 class MachineService:
-    gateway_base_url = os.getenv("TORUS_GATEWAY_URL", "http://10.10.10.49:5001")
-    
-    def __init__(self, grid_fs: AsyncIOMotorGridFSBucket, product_log_collection: AsyncIOMotorCollection):
-        self.repository = FileRepository(grid_fs)
-        self.nc_root_paths = {}
-        self.product_log_collection = product_log_collection  
-        self.redis_tracker = RedisJobTracker() 
+    """
+    CNC 장비와 연동되는 주요 비즈니스 로직(목록 조회, 파일 전송, 상태 추적 등)을 담당하는 서비스 계층.
+    """
 
+    def __init__(
+        self, 
+        machine_repo: MachineRepository, 
+        file_repo: FileRepository, 
+        log_repo: MachineLogRepository, 
+        job_tracker: RedisRepository
+    ):
+        """
+        :param machine_repo: 장비 관련 외부 API 통신 리포지토리
+        :param file_repo: 파일(GridFS) 관리 리포지토리
+        :param log_repo: MongoDB 가공 로그 관리 리포지토리
+        :param job_tracker: Redis 기반 상태 추적기
+        """
+        self.machine_repo = machine_repo
+        self.file_repo = file_repo
+        self.log_repo = log_repo
+        self.job_tracker = job_tracker
 
-    async def _get_nc_root_path(self, machine_id: int) -> str:
-        if machine_id in self.nc_root_paths:
-            return self.nc_root_paths[machine_id]
-        
-        try:
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(
-                    f"{self.gateway_base_url}/machine/ncMemory/rootPath",
-                    params={"machine": machine_id}
-                )
-                response.raise_for_status()
-                data = response.json()
-                root_path = data.get("value", "")[0]
-                logging.info(root_path)
-                if not root_path:
-                    raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
-                self.nc_root_paths[machine_id] = root_path
-                return root_path
-        except Exception:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
-    
     async def get_machine_list(self) -> MachineListResponse:
         """
-        Torus Gateway API를 호출하여 등록된 CNC 장비 목록을 조회합니다.
+        현재 시스템에 등록된 모든 장비 정보를 반환.
+        :return: MachineListResponse (장비 목록)
         """
-        try:
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(f"{self.gateway_base_url}/machine/list")
-                response.raise_for_status()
-                raw_data = response.json()
-                machine_list = raw_data.get("value", [])
-                return MachineListResponse(machines=machine_list)
-        except Exception:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
+        raw_list = await self.machine_repo.get_machine_list()
+        machines = [MachineInfo(**item) for item in raw_list]
+        return MachineListResponse(machines=machines)
 
+    async def get_machine_data(self, endpoint: str, params: dict = None):
+        """
+        임의의 endpoint로부터 데이터를 조회합니다. LLM tool 호출 가능.
+        
+        :param endpoint: base_url 뒤에 붙는 경로 (예: "/machine/list")
+        :param params: GET 요청에 사용할 쿼리 파라미터
+        :return: 응답 데이터 value 또는 전체 json
+        """
+        return await self.machine_repo.get_data(endpoint, params)
 
     async def upload_torus_file(self, project_id: str, machine_id: int, file_id: str) -> MachineFileUploadResponse:
-        try:
-            byte_io, filename = await self.repository.get_file_byteio_and_name(file_id)
-            file_data = byte_io.read()
-            ncpath = await self._get_nc_root_path(machine_id)
+        """
+        NC 파일을 장비로 업로드 (중복 파일 삭제, 폴더 생성, 포맷 검증 등 포함).
+        :param project_id: 프로젝트 ID
+        :param machine_id: 장비 ID
+        :param file_id: 업로드할 NC 파일의 GridFS ID
+        :return: 업로드 결과 정보
+        """
+        # 1. 파일 내용 로드 및 파일명 추출
+        byte_io, filename = await self.file_repo.get_file_byteio_and_name(file_id)
+        file_data = byte_io.read()
+        # 2. NC 루트 경로 및 작업 폴더 경로 확보
+        ncpath_root = await self.machine_repo.get_nc_root_path(machine_id)
+        project_folder_path = f"{ncpath_root}OM/"
+        await self.machine_repo.ensure_folder_exists(machine_id, project_folder_path)
         
-            machines = await self.get_machine_list()
-            matched_machine = next((m for m in machines.machines if m.id == machine_id), None)
+        project_folder_path = project_folder_path + f"{project_id}/"
 
-            if not matched_machine:
-                raise CustomException(ExceptionEnum.MACHINE_NOT_FOUND)
+        # 3. 해당 장비 정보 확인
+        machines: MachineListResponse = await self.get_machine_list()
+        matched_machine = next((m for m in machines.machines if m.id == machine_id), None)
+        if not matched_machine:
+            raise CustomException(ExceptionEnum.MACHINE_NOT_FOUND)
 
-            
-            # vendorCode가 simense인 경우 O번호 체크
-            if matched_machine.vendorCode.lower() == "fanuc":
-                # G-code 파일 내용 디코딩 후 'O1234' 번호 추출
-                content_str = file_data.decode(errors="ignore")
-                o_match = re.search(r"\bO(\d+)", content_str)
+        # 4. FANUC 계열인 경우 NC 파일명 포맷 검증
+        if matched_machine.vendorCode.lower() == "fanuc":
+            content_str = file_data.decode(errors="ignore")
+            o_match = re.search(r"\bO(\d+)", content_str)
+            if not o_match:
+                raise CustomException(ExceptionEnum.INVALID_SIMENSE_FORMAT)
+            o_number = f"O{o_match.group(1)}"
+            if not filename.startswith(o_number):
+                raise CustomException(ExceptionEnum.INVALID_FILE_NAME_FORMAT)
 
-                if not o_match:
-                    raise CustomException(ExceptionEnum.INVALID_SIMENSE_FORMAT)
+        # 5. 폴더 생성 및 동일 파일 삭제, 파일 업로드
+        await self.machine_repo.ensure_folder_exists(machine_id, project_folder_path)
+        await self.machine_repo.remove_file_if_exists(machine_id, project_folder_path, filename)
+        await self.machine_repo.put_nc_file(machine_id, project_folder_path, filename, file_data)
+        self.job_tracker.set_status(project_id, filename, machine_id, "가공 대기")
 
-                o_number = f"O{o_match.group(1)}"
+        return MachineFileUploadResponse(
+            status=0,
+            filename=filename,
+            machine_id=machine_id,
+            ncpath=project_folder_path
+        )
 
-                if not filename.startswith(o_number):
-                    raise CustomException(ExceptionEnum.INVALID_FILE_NAME_FORMAT)
-
-            file_list = await self.get_file_list(machine_id, ncpath)
-            if filename in file_list:
-                await self.delete_file(machine_id, ncpath+filename)
-
-            files = {
-                "file": (filename, file_data, "application/octet-stream")
-            }
-            params = {
-                "machine": machine_id,
-                "ncpath": ncpath
-            }
-
-            self.redis_tracker.enqueue_job(machine_id, filename, project_id)
-
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.put(
-                    f"{self.gateway_base_url}/file/machine/ncpath",
-                    files=files,
-                    params=params
-                )
-                response.raise_for_status()
-                result = response.json()
-
-                return MachineFileUploadResponse(
-                    status=result.get("status", -1),
-                    filename=filename,
-                    machine_id=machine_id,
-                    ncpath=ncpath
-                )
-        except CustomException as ce:
-            logging.info(ce)
-            raise ce
-        except Exception as e:
-            logging.info(e)
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
-
-    async def get_machine_status(self, machine_id: int):
-        try:
-            params = {'machine': machine_id, 'channel': 1}
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(
-                    f"{self.gateway_base_url}/machine/channel/currentProgram/programMode",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                program_mode = data.get("value", [None])[0]
-                return MachineProgramStatusResponse(programMode=program_mode)
-        except Exception:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
-        
-    async def delete_file(self, machine_id: int, ncpath: str):
-        try:
-            params = {'machine': machine_id, 'ncpath': ncpath}
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.delete(
-                    f"{self.gateway_base_url}/file/machine/ncpath/delete",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                result = data.get("value", [None])[0]
-                return
-        except Exception as e:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR) 
-        
-    async def get_current_program_name(self, machine_id: int) -> str:
-        try:
-            params = {'machine': machine_id, 'channel': 1}
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(
-                    f"{self.gateway_base_url}/machine/channel/currentProgram/currentFile/programNameWithPath",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                logging.info(f"📦 Response JSON: {data}")
-                program_name = data.get("value", [None])[0]
-                if not program_name or not isinstance(program_name, str):
-                    return ""
-                return program_name
-
-        except Exception:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR)
-
-    async def get_file_list(self, machine_id: int, ncpath: str):
-        try:
-            params = {'machine': machine_id, 'ncpath': ncpath}
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.get(
-                    f"{self.gateway_base_url}/file/machine/ncpath/list",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                result = data.get("files", [None])
-                return result
-
-        except Exception:
-            raise CustomException(ExceptionEnum.EXTERNAL_REQUEST_ERROR) 
+    async def get_machine_status(self, machine_id: int) -> MachineProgramStatusResponse:
+        """
+        장비의 현재 가공 상태(프로그램 모드) 조회.
+        :param machine_id: 장비 ID
+        :return: MachineProgramStatusResponse (mode)
+        """
+        program_mode = await self.machine_repo.get_machine_status(machine_id)
+        return MachineProgramStatusResponse(programMode=program_mode)
 
     async def track_all_machines_forever(self):
+        """
+        모든 CNC 장비의 가공 상태를 백그라운드에서 지속적으로 추적.
+        신규 장비가 추가되면 자동으로 트래킹을 시작.
+        """
         tracked_machines = set()
         while True:
             machines = await self.get_machine_list()
             machine_ids = [m.id for m in machines.machines]
-
-            logger.info(f"📡 Found {len(machine_ids)} machines: {machine_ids}")
+            logging.info(f"📡 Found {len(machine_ids)} machines: {machine_ids}")
 
             for machine_id in machine_ids:
                 if machine_id not in tracked_machines:
                     tracked_machines.add(machine_id)
-                    logger.info(f"🛰️ Starting tracking for machine {machine_id}")
+                    logging.info(f"🛰️ Starting tracking for machine {machine_id}")
                     asyncio.create_task(self._track_single_machine(machine_id))
-
             await asyncio.sleep(10)
 
-
     async def _track_single_machine(self, machine_id: int):
+        """
+        단일 CNC 장비의 가공 상태를 실시간 모니터링, 공구 교체, 로그 적재 및 상태 변경 처리.
+        (내부에서만 사용)
+        """
         current_tool = None
         operation_index = 1
         product_uuid = str(uuid.uuid4())
         log_doc = None
         is_processing = False
+        current_project_id = None
+        current_filename = None
 
         while True:
             try:
-                queue_list = self.redis_tracker.get_job_queue(machine_id)
-                logger.info(f"📋 Queue for machine {machine_id}: {queue_list}")
-
                 status = await self.get_machine_status(machine_id)
-                logger.info(f"🔍 Machine {machine_id} status = {status.programMode}")
+                logging.info(f"🔍 Machine {machine_id} status = {status.programMode}")
 
                 if status.programMode == 3:  # 가공 중
-                    queue_data = self.redis_tracker.peek_job(machine_id)
+                    program_path = await self.machine_repo.get_current_program_name(machine_id)
+                    dir_path = os.path.dirname(program_path) 
+                    program_name = os.path.basename(program_path)
+                    project_id = self.job_tracker.find_project_id_by_filename(program_name, machine_id)
 
-                    if queue_data:
-                        filename, project_id = queue_data
-                        program_path = await self.get_current_program_name(machine_id)
-                        dir_path = os.path.dirname(program_path) 
-                        program_name = os.path.basename(program_path)
+                    if dir_path == "//CNC_MEM/USER/LIBRARY":
+                        continue
 
-                        if dir_path == "//CNC_MEM/USER/LIBRARY":
-                            continue
+                    if not project_id:
+                        logging.warning(f"⚠️ No project found for {program_name} on machine {machine_id}")
+                        await asyncio.sleep(3)
+                        continue
 
-                        if program_name == filename:
-                            self.redis_tracker.mark_processing(project_id, filename, machine_id)
-                            logger.info(f"✅ Processing: {filename} on machine {machine_id}")
+                    self.job_tracker.mark_processing(project_id, program_name, machine_id)
+                    tool = await self.machine_repo.get_active_tool_number(machine_id)
 
-                            tool = await self._get_active_tool_number(machine_id)
-
-                            if not is_processing:
-                                # 최초 가공 시작
-                                is_processing = True
-                                current_tool = tool
-                                log_doc = {
-                                    "project_id": project_id,
-                                    "machine_id": machine_id,
-                                    "product_uuid": product_uuid,
-                                    "start_time": datetime.now(),
-                                    "finish_time": None,
-                                    "finished": False,
-                                    "operations": []
-                                }
-                                await self._log_product_operation(log_doc, operation_index, current_tool, "start")
-                            elif tool != current_tool:
-                                # 툴 변경
-                                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
-                                operation_index += 1
-                                await self._log_product_operation(log_doc, operation_index, tool, "start")
-                                current_tool = tool
-
-                        else:
-                            # 현재 프로그램이 queue와 다르면 이전 가공 종료로 간주
-                            self.redis_tracker.mark_finished(project_id, filename, machine_id)
-                            self.redis_tracker.pop_job(machine_id)
-                            logger.info(f"🏁 Finished: {filename} on machine {machine_id}")
-                            if log_doc:
-                                await self._log_product_operation(log_doc, operation_index, current_tool, "end")
-                                log_doc["finish_time"] = datetime.now()
-                                log_doc["finished"] = True
-                                await self.product_log_collection.insert_one(log_doc)
-                            is_processing = False
-                            log_doc = None
+                    if not is_processing:
+                        # 가공 시작 시 로그 초기화
+                        is_processing = True
+                        current_tool = tool
+                        current_project_id = project_id
+                        current_filename = program_name
+                        log_doc = {
+                            "project_id": project_id,
+                            "machine_id": machine_id,
+                            "product_uuid": product_uuid,
+                            "start_time": datetime.now(),
+                            "finish_time": None,
+                            "finished": False,
+                            "operations": []
+                        }
+                        await self._log_product_operation(log_doc, operation_index, current_tool, "start")
+                    elif tool != current_tool:
+                        # 공구 변경 감지 시 이전 공구 종료 + 새 공구 시작
+                        await self._log_product_operation(log_doc, operation_index, current_tool, "end")
+                        operation_index += 1
+                        await self._log_product_operation(log_doc, operation_index, tool, "start")
+                        current_tool = tool
 
                 elif is_processing:
-                    # 가공 종료 감지
-                    self.redis_tracker.mark_finished(project_id, filename, machine_id)
-                    self.redis_tracker.pop_job(machine_id)
-                    logger.info(f"🏁 Machine {machine_id} exited processing mode.")
-
+                    # 가공 종료 시 상태 및 로그 정리
+                    self.job_tracker.mark_finished(current_project_id, current_filename, machine_id)
+                    logging.info(f"🏁 Finished: {current_filename} on machine {machine_id}")
                     await self._log_product_operation(log_doc, operation_index, current_tool, "end")
                     log_doc["finish_time"] = datetime.now()
                     log_doc["finished"] = True
-                    await self.product_log_collection.insert_one(log_doc)
+                    await self.log_repo.insert_log(log_doc)
+                    # 상태 초기화
                     product_uuid = str(uuid.uuid4())
                     is_processing = False
                     log_doc = None
+                    current_project_id = None
+                    current_filename = None
 
             except Exception as e:
-                logger.error(f"❌ Error tracking machine {machine_id}: {e}", exc_info=True)
-
+                logging.error(f"❌ Error tracking machine {machine_id}: {e}", exc_info=True)
             await asyncio.sleep(3)
 
-
-
     async def _log_product_operation(self, log_doc: dict, index: int, tool_number: int, action: str):
+        """
+        가공/공구 로그를 기록 (operation 배열에 추가/수정).
+        :param log_doc: 현재 가공 로그 dict
+        :param index: operation index
+        :param tool_number: 공구 번호
+        :param action: 'start' or 'end'
+        """
         if action == "start":
             operation = {
                 "uuid": str(uuid.uuid4()),
@@ -309,23 +221,8 @@ class MachineService:
                 "end_time": None
             }
             log_doc["operations"].append(operation)
-
         elif action == "end":
             for op in reversed(log_doc["operations"]):
                 if op["index"] == index and op["end_time"] is None:
                     op["end_time"] = datetime.now()
                     break
-    
-    async def _get_active_tool_number(self, machine_id: int, channel: int = 1) -> int:
-        try:
-            params = {"machine": machine_id, "channel": channel}
-            async with httpx.AsyncClient(verify=False) as client:
-                res = await client.get(
-                    f"{self.gateway_base_url}/machine/channel/activeTool/toolNumber",
-                    params=params
-                )
-                res.raise_for_status()
-                data = res.json()
-                return int(data.get("value", [0])[0])
-        except Exception:
-            return -1

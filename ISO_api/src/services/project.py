@@ -13,10 +13,19 @@ from src.entities.project import ProjectRepository
 import xml.dom.minidom
 
 class ProjectService:
+    """
+    프로젝트 생성, 조회, 삭제, 파일/캠 데이터 등록, XML 핸들링 등 
+    프로젝트 업무 전반을 담당하는 서비스 클래스.
+    """
     def __init__(self, collection: AsyncIOMotorCollection):
+        # MongoDB collection 주입, 실제 작업은 ProjectRepository에 위임
         self.repository = ProjectRepository(collection)
 
     async def create_project(self, xml_string: str):
+        """
+        신규 프로젝트 생성.
+        XML을 dict로 파싱, its_id 추출 후 저장. 
+        """
         xml_dict = self.xml_to_dict(xml_string)
         its_id = xml_dict["project"]["its_id"]
         xml_string = self.save_xml_data(xml_dict)
@@ -26,24 +35,35 @@ class ProjectService:
         return project_data
     
     async def get_project_list(self) -> ProjectListResponse:
+        """
+        전체 프로젝트 목록 조회 (project_id만 반환).
+        """
         projects = await self.repository.get_project_list()
         project_ids = [str(project["_id"]) for project in projects]
         return ProjectListResponse(project_id=project_ids)
     
     async def get_project_by_id(self, xml_string: str):
+        """
+        프로젝트 ID로 프로젝트 조회.
+        """
         project = await self.repository.get_project_by_id(xml_string)
         if not project:
             raise CustomException(ExceptionEnum.PROJECT_NOT_FOUND)
         return project
     
     async def delete_project_by_id(self, project_id: str) -> None:
+        """
+        프로젝트 삭제. 실패 시 예외 발생.
+        """
         deleted = await self.repository.delete_project_by_id(project_id)
         if not deleted:
             raise CustomException(ExceptionEnum.PROJECT_DELETE_FAILED)
         return
 
-    
     async def file_upload(self, project_id: str, file_id: str, file_type: str):
+        """
+        프로젝트에 파일(ObjectId) 연결. file_type에 따라 필드 결정.
+        """
         status = await self.repository.add_file_to_project(project_id, file_id, file_type)
         if not status:
             raise CustomException(ExceptionEnum.STP_UPLOAD_FAILED)
@@ -57,9 +77,9 @@ class ProjectService:
         value_dict: dict
     ) -> bool:
         """
-        공통 삽입 처리 함수
-        - type_key: 'nc_code', 'vm', 'tdms'
-        - value_dict: 삽입할 dict 예) {'its_id': file_id} or {'raw': path, 'ext': file_id}
+        workplan 요소(its_elements, 혹은 main_workplan 자체)에 
+        nc_code, vm, tdms 등 삽입.
+        value_dict: 삽입할 데이터 dict
         """
         main_workplan = data['project'].get("main_workplan")
         if not main_workplan:
@@ -95,6 +115,9 @@ class ProjectService:
         return False
     
     async def nc_upload(self, project: dict, workplan_id: str, file_id: str):
+        """
+        NC 코드 파일 업로드 및 프로젝트 XML 데이터에 삽입.
+        """
         data = xmltodict.parse(project['data'])
 
         found = await self._insert_to_workplan_element(
@@ -107,6 +130,9 @@ class ProjectService:
         await self.repository.update_project_data(project['_id'], updated)
 
     async def vm_upload(self, project: dict, workplan_id: str, file_id: str):
+        """
+        VM 파일 업로드 및 프로젝트 XML 데이터에 삽입.
+        """
         data = xmltodict.parse(project['data'])
 
         found = await self._insert_to_workplan_element(
@@ -120,6 +146,9 @@ class ProjectService:
         await self.repository.update_project_data(project['_id'], updated)
 
     async def tdms_upload(self, project: dict, workplan_id: str, file_id: str, tdms_path: str):
+        """
+        TDMS 파일 업로드 및 프로젝트 XML 데이터에 삽입.
+        """
         data = xmltodict.parse(project['data'])
 
         found = await self._insert_to_workplan_element(
@@ -132,14 +161,19 @@ class ProjectService:
         updated = self.save_xml_data(data)
         await self.repository.update_project_data(project['_id'], updated)
 
-
     async def stp_upload(self, project_id: str, file_id: dict):
+        """
+        프로젝트에 step, stl 등 여러 파일 ObjectId(dict)를 한번에 추가.
+        """
         status = await self.repository.add_dict_to_project(project_id, file_id)
         if not status:
             raise CustomException(ExceptionEnum.STP_UPLOAD_FAILED)
         return
 
     async def add_cam_to_proejct(self, project: dict, cam_type: str, cam_json_file: UploadFile, mapping_json_file: UploadFile):
+        """
+        CAM (NX/파워밀) 데이터 업로드 및 XML 변환, 프로젝트에 추가.
+        """
         json_data = (await cam_json_file.read()).decode("utf-8-sig")
         mapping_data = (await mapping_json_file.read()).decode("utf-8-sig")
         data = self.xml_to_dict(project['data'])
@@ -152,6 +186,9 @@ class ProjectService:
         return
 
     async def process_cam_upload(self, project: dict, cam_type: str, json_data: str, mapping_data: str):
+        """
+        CAM 데이터 및 매핑 데이터 파싱 후 XML로 변환하여 its_elements에 삽입.
+        """
         print(project)
         parsed_data = json.loads(json_data)
         mapping_data = json.loads(mapping_data)
@@ -180,10 +217,15 @@ class ProjectService:
         return project
 
     def xml_to_dict(self, project_xml: str):
+        """프로젝트 XML을 dict로 변환."""
         project_dict = xmltodict.parse(project_xml)
         return project_dict
     
     def save_xml_data(self, data: dict):
+        """
+        dict → XML 변환 및 데이터클래스 기반 보정.
+        pretty XML string 반환.
+        """
         data = xmltodict.unparse(data, pretty=True)
         data_class = parser.from_string(data, Project)
         xml_string = update_xml_from_dataclass(data, data_class)
@@ -191,6 +233,9 @@ class ProjectService:
         return pretty_xml
     
     def get_inner_data(self, project: str, path: str):
+        """
+        XML 내에서 특정 경로(path) 요소만 추출하여 XML로 반환.
+        """
         path = path.split("/")
         parent_element = path[-1]
         data = self.get_nested_attribute(data=project, attributes=path)
@@ -203,6 +248,9 @@ class ProjectService:
         return data
     
     def get_nested_attribute(self, data, attributes):
+        """
+        dict/list 구조에서 attribute 경로 따라 하위 요소 접근.
+        """
         for attr in attributes:
             if isinstance(data, dict):
                 data = data.get(attr, None)
@@ -213,6 +261,9 @@ class ProjectService:
         return data
     
     def valid_file_id(self, data: dict, workplan_id: str, file_id: str, file_type: str):
+        """
+        workplan에 특정 파일(file_id)이 존재하는지 확인. 없으면 예외.
+        """
         xml_data = self.xml_to_dict(data['data'])
         project = xml_data.get("project")
         if not project:
@@ -232,6 +283,9 @@ class ProjectService:
         return
 
     def _find_target_workplan(self, main_workplan: dict, workplan_id: str) -> Optional[dict]:
+        """
+        main_workplan 내에서 its_id로 해당 workplan dict 반환.
+        """
         its_elements = main_workplan.get("its_elements")
         if its_elements:
             if not isinstance(its_elements, list):
@@ -246,6 +300,9 @@ class ProjectService:
         return None
     
     def _check_file_exists(self, workplan: dict, file_type: str, file_id: str) -> bool:
+        """
+        workplan dict에서 해당 file_type(list) 중 file_id 포함 여부 확인.
+        """
         file_list = workplan.get(file_type)
 
         if not file_list:

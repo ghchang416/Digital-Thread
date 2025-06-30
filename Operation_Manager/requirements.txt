@@ -13,3 +13,4 @@ aiofiles
 chardet
 motor
 redis
+fastmcp

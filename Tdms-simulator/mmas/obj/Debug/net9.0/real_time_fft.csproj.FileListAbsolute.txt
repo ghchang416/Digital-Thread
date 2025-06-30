@@ -1,0 +1,146 @@
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.exe
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.deps.json
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.runtimeconfig.json
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.Extensions.ManagedClient.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/SuperSocket.ClientEngine.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/bin/Debug/net9.0/WebSocket4Net.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_tim.20D36691.Up2Date
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/refint/real_time_fft.dll
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.genruntimeconfig.cache
+C:/Users/Gyeonghyun/Downloads/이지연 인수인계 파일/1. 연구 관련(코드 모음)/Real-time-MMAS-Simulator/obj/Debug/net9.0/ref/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.exe
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.deps.json
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.runtimeconfig.json
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.Extensions.ManagedClient.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/RabbitMQ.Client.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/SuperSocket.ClientEngine.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/System.Threading.RateLimiting.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/bin/Debug/net9.0/WebSocket4Net.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_tim.20D36691.Up2Date
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/refint/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.genruntimeconfig.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.1/Real-time-MMAS-Simulator/obj/Debug/net9.0/ref/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.exe
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.deps.json
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.runtimeconfig.json
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.Extensions.ManagedClient.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/RabbitMQ.Client.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/SuperSocket.ClientEngine.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/System.Threading.RateLimiting.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/TDMSReader.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/WebSocket4Net.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_tim.20D36691.Up2Date
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/refint/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.genruntimeconfig.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/obj/Debug/net9.0/ref/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/FSharp.Core.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/FSharp.Data.Tdms.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/cs/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/de/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/es/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/fr/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/it/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/ja/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/ko/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/pl/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/pt-BR/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/ru/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/tr/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/zh-Hans/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj1.2/Real-time-MMAS-Simulator/bin/Debug/net9.0/zh-Hant/FSharp.Core.resources.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.exe
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.deps.json
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.runtimeconfig.json
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Google.Protobuf.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.AspNetCore.Server.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.AspNetCore.Server.ClientFactory.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.Core.Api.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.Net.Client.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.Net.ClientFactory.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/Grpc.Net.Common.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/MQTTnet.Extensions.ManagedClient.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/RabbitMQ.Client.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/SuperSocket.ClientEngine.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/TDMSReader.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/bin/Debug/net9.0/WebSocket4Net.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_tim.20D36691.Up2Date
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/refint/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.pdb
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/real_time_fft.genruntimeconfig.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/Real-time-MMAS-Simulator/obj/Debug/net9.0/ref/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/refint/real_time_fft.dll
+C:/Users/Gyeonghyun/Documents/workspace/proj.tdms_reader_gprc/mmas/obj/Debug/net9.0/real_time_fft.pdb
+/App/bin/Debug/net9.0/real_time_fft
+/App/bin/Debug/net9.0/real_time_fft.deps.json
+/App/bin/Debug/net9.0/real_time_fft.runtimeconfig.json
+/App/bin/Debug/net9.0/real_time_fft.dll
+/App/bin/Debug/net9.0/real_time_fft.pdb
+/App/bin/Debug/net9.0/Google.Protobuf.dll
+/App/bin/Debug/net9.0/Grpc.AspNetCore.Server.dll
+/App/bin/Debug/net9.0/Grpc.AspNetCore.Server.ClientFactory.dll
+/App/bin/Debug/net9.0/Grpc.Core.Api.dll
+/App/bin/Debug/net9.0/Grpc.Net.Client.dll
+/App/bin/Debug/net9.0/Grpc.Net.ClientFactory.dll
+/App/bin/Debug/net9.0/Grpc.Net.Common.dll
+/App/bin/Debug/net9.0/MQTTnet.dll
+/App/bin/Debug/net9.0/MQTTnet.Extensions.ManagedClient.dll
+/App/bin/Debug/net9.0/RabbitMQ.Client.dll
+/App/bin/Debug/net9.0/SuperSocket.ClientEngine.dll
+/App/bin/Debug/net9.0/TDMSReader.dll
+/App/bin/Debug/net9.0/WebSocket4Net.dll
+/App/obj/Debug/net9.0/real_time_fft.csproj.AssemblyReference.cache
+/App/obj/Debug/net9.0/real_time_fft.GeneratedMSBuildEditorConfig.editorconfig
+/App/obj/Debug/net9.0/real_time_fft.AssemblyInfoInputs.cache
+/App/obj/Debug/net9.0/real_time_fft.AssemblyInfo.cs
+/App/obj/Debug/net9.0/real_time_fft.csproj.CoreCompileInputs.cache
+/App/obj/Debug/net9.0/real_tim.20D36691.Up2Date
+/App/obj/Debug/net9.0/real_time_fft.dll
+/App/obj/Debug/net9.0/refint/real_time_fft.dll
+/App/obj/Debug/net9.0/real_time_fft.pdb
+/App/obj/Debug/net9.0/real_time_fft.genruntimeconfig.cache
+/App/obj/Debug/net9.0/ref/real_time_fft.dll

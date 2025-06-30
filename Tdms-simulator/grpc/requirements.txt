@@ -1,0 +1,8 @@
+pyyaml
+nptdms
+grpcio
+grpcio-tools
+pandas
+pika
+pandas
+pika

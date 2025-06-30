@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package tdms_service;
+
+service TdmsService {
+    rpc ReadTdms(TdmsReadRequest) returns (stream TdmsReadResponse); // TDMS 데이터 읽기
+    rpc SendTdms(TdmsSendRequest) returns (TdmsSendResponse); // C#이 받은 데이터를 AI 서버로 전송
+    rpc ReceivedData(DataReceivedRequest) returns (DataReceivedResponse); // AI Server에서 Inference 결과 가져오기
+}
+
+message TdmsReadRequest {
+    string tdms_data = 1;
+}
+
+message TdmsReadResponse {
+    string tdms_data = 1; // TDMS 파일에서 읽은 데이터 (C#에 전달)
+}
+
+message TdmsSendRequest {
+    string tdms_data = 1; // C#에서 받은 데이터를 AI 서버로 보냄
+    float timer = 2;      // 타임스탬프 포함
+}
+
+message TdmsSendResponse {}
+
+message DataReceivedRequest {} 
+
+message DataReceivedResponse {
+    string received_data = 1; // AI Server에서 받은 Inference 결과
+}

@@ -5,6 +5,7 @@ from src.apis.upload_file import router as upload_file_router
 from src.apis.download_file import router as download_file_router
 from src.apis.convert import router as convert_router
 from src.utils.exceptions import CustomException
+from fastapi_mcp import FastApiMCP
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
@@ -25,3 +26,14 @@ app.include_router(project_router)
 app.include_router(upload_file_router)
 app.include_router(download_file_router)
 app.include_router(convert_router)
+
+mcp = FastApiMCP(
+    app,  
+    name="My API MCP",
+    description="MCP server for my API",
+)
+mcp.mount()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
