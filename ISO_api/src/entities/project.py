@@ -3,6 +3,7 @@ from src.schemas.project import ProjectCreateResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 
+
 # 프로젝트 정보를 MongoDB에 저장, 조회, 수정, 삭제 등 프로젝트 관련 DB 작업을 담당하는 클래스입니다.
 class ProjectRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -12,7 +13,9 @@ class ProjectRepository:
         """
         self.project_collection = db["projects"]
 
-    async def insert_project(self, xml_string: str, its_id: str) -> ProjectCreateResponse:
+    async def insert_project(
+        self, xml_string: str, its_id: str
+    ) -> ProjectCreateResponse:
         """
         프로젝트를 신규로 생성하여 MongoDB에 저장합니다.
 
@@ -23,10 +26,7 @@ class ProjectRepository:
         Returns:
             ProjectCreateResponse: 생성된 프로젝트의 ID 반환
         """
-        project_data = {
-            "data": xml_string,
-            "name": its_id
-        }
+        project_data = {"data": xml_string, "name": its_id}
         result = await self.project_collection.insert_one(project_data)
         return ProjectCreateResponse(project_id=str(result.inserted_id))
 
@@ -40,7 +40,22 @@ class ProjectRepository:
         cursor = self.project_collection.find({})
         projects = await cursor.to_list(length=None)
         return projects
-    
+
+    async def get_dtasset_project_list(self) -> List[dict]:
+        """
+        전체 프로젝트 목록을 조회합니다.
+        dt_asset 프로젝트만 가져올 수 있게 find로 필터링
+
+        Returns:
+            List[dict]: 프로젝트 정보 리스트
+        """
+        cursor = self.project_collection.find(
+            {"data": {"$regex": r"<\s*dt_asset(\s|>)", "$options": "i"}},
+            projection={"_id": 1},
+        )
+        projects = await cursor.to_list(length=None)
+        return projects
+
     async def delete_project_by_id(self, project_id: str) -> bool:
         """
         프로젝트 ID로 프로젝트를 삭제합니다.
@@ -53,7 +68,7 @@ class ProjectRepository:
         """
         result = await self.project_collection.delete_one({"_id": ObjectId(project_id)})
         return result.deleted_count > 0
-    
+
     async def get_project_by_id(self, project_id: str):
         """
         프로젝트 ID로 프로젝트 정보를 조회합니다.
@@ -81,11 +96,10 @@ class ProjectRepository:
         """
         update_query = {}
         update_query["$push"] = {f"{file_type}_id": file_id}
-        
+
         result = await self.project_collection.update_one(
-            {"_id": ObjectId(project_id)},
-            update_query
-        )        
+            {"_id": ObjectId(project_id)}, update_query
+        )
         return result.modified_count > 0
 
     async def add_dict_to_project(self, project_id: str, file_dict: dict):
@@ -101,9 +115,8 @@ class ProjectRepository:
         """
         update_query = {"$set": file_dict}
         result = await self.project_collection.update_one(
-            {"_id": ObjectId(project_id)},
-            update_query
-        )        
+            {"_id": ObjectId(project_id)}, update_query
+        )
         return result.modified_count > 0
 
     async def update_project_data(self, project_id: str, updated_data: str):
@@ -118,7 +131,6 @@ class ProjectRepository:
             bool: 업데이트 성공 여부
         """
         result = await self.project_collection.update_one(
-            {"_id": ObjectId(project_id)},
-            {"$set": {"data": updated_data}}
+            {"_id": ObjectId(project_id)}, {"$set": {"data": updated_data}}
         )
         return result.modified_count > 0

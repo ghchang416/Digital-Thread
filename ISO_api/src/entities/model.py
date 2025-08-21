@@ -1320,6 +1320,7 @@ class Two5DMillingStrategy:
         },
     )
 
+
 @dataclass
 class YearNumber:
     class Meta:
@@ -1552,11 +1553,12 @@ class FreeformStrategy:
         },
     )
 
+
 @dataclass
 class PowerMillingFreeformStrategy(FreeformStrategy):
     class Meta:
         name = "powermilling_freeform_strategy"
-    
+
     cutmode1: Optional[CutmodeType] = field(
         default=None,
         metadata={
@@ -1573,6 +1575,7 @@ class PowerMillingFreeformStrategy(FreeformStrategy):
             "required": True,
         },
     )
+
 
 @dataclass
 class GeometricRepresentationItem(RepresentationItem):
@@ -4316,14 +4319,14 @@ class BoundingGeometrySelect:
             "namespace": "http://digital-thread.re/iso14649",
         },
     )
-    advanced_brep_shape_representation: Optional[
-        AdvancedBrepShapeRepresentation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/iso14649",
-        },
+    advanced_brep_shape_representation: Optional[AdvancedBrepShapeRepresentation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/iso14649",
+            },
+        )
     )
 
 
@@ -5380,8 +5383,6 @@ class MachiningOperation(Operation):
         },
     )
 
-    
-
 
 @dataclass
 class Setup:
@@ -5561,6 +5562,7 @@ class TurningMachiningOperation(MachiningOperation):
         },
     )
 
+
 @dataclass
 class Tdms:
     raw: Optional[str] = field(
@@ -5578,6 +5580,7 @@ class Tdms:
         },
     )
 
+
 @dataclass
 class NcCode:
     its_id: Optional[str] = field(
@@ -5587,6 +5590,7 @@ class NcCode:
             "namespace": "http://digital-thread.re/iso14649",
         },
     )
+
 
 @dataclass
 class Vm:
@@ -5750,6 +5754,7 @@ class Grooving(TurningMachiningOperation):
 class Knurling(TurningMachiningOperation):
     class Meta:
         name = "knurling"
+
 
 @dataclass
 class MachiningWorkingstep(Workingstep):
@@ -6368,7 +6373,6 @@ class Boss(MachiningFeature):
             "namespace": "http://digital-thread.re/iso14649",
         },
     )
-
 
 
 @dataclass
@@ -7663,7 +7667,7 @@ class PowerMillBottomAndSideMilling(BottomAndSideMilling):
             "required": True,
         },
     )
-    
+
     YAxisVector: Optional[Direction] = field(
         default=None,
         metadata={
