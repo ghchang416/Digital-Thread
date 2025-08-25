@@ -4,6 +4,12 @@ from src.apis.project import router as project_router
 from src.apis.upload_file import router as upload_file_router
 from src.apis.download_file import router as download_file_router
 from src.apis.convert import router as convert_router
+
+# asset 테스트용
+from src.apis.v2.asset_project import router as asset_project_router
+from src.apis.v2.asset_upload_file import router as asset_upload_file_router
+from src.apis.v2.asset_download_file import router as asset_download_file_router
+
 from src.utils.exceptions import CustomException
 from fastapi_mcp import FastApiMCP
 import logging
@@ -15,6 +21,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = FastAPI()
 
+
 @app.exception_handler(CustomException)
 async def custom_exception_handler(request: Request, exc: CustomException):
     return JSONResponse(
@@ -22,13 +29,17 @@ async def custom_exception_handler(request: Request, exc: CustomException):
         content={"detail": exc.detail},
     )
 
+
 app.include_router(project_router)
 app.include_router(upload_file_router)
 app.include_router(download_file_router)
 app.include_router(convert_router)
+app.include_router(asset_project_router)
+app.include_router(asset_upload_file_router)
+app.include_router(asset_download_file_router)
 
 mcp = FastApiMCP(
-    app,  
+    app,
     name="My API MCP",
     description="MCP server for my API",
 )
@@ -36,4 +47,5 @@ mcp.mount()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -12,3 +12,12 @@ data/
 .vs
 .vscode
 Release/
+
+Operation_Manager/front_app/.next/
+Operation_Manager/front_app/node_modules/
+Operation_Manager/front_app/.env.local
+Operation_Manager/front_app/next-env.d.ts
+
+tmp/
+
+.DS_Store
