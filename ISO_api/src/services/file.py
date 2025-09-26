@@ -316,3 +316,8 @@ class FileService:
                 )
             response.raise_for_status()
             return response.content  # 변환 결과 bytes (json)
+
+    async def get_file_text(self, file_id: str, encoding: str = "utf-8") -> str:
+        bio = await self.repository.get_file_byteio(file_id)  # BytesIO 반환
+        bio.seek(0)
+        return bio.read().decode(encoding, errors="ignore")
