@@ -46,6 +46,8 @@ from src.utils.cam_common import (
     ensure_dummy_feature,
     ensure_feedrate_reference,
     derive_tool_display_name_from_mapping,
+    ensure_dummy_its_tool,
+    force_dummy_its_tool,
 )
 from src.utils.cam_nx_adapter import pick_nx_ops
 from src.utils.cam_powermill_adapter import (
@@ -450,6 +452,9 @@ async def apply_cam_into_workplan(
             .get("cutmode")
         )
         ensure_feedrate_reference(ws_node, cutmode=cutmode)
+
+        # its_tool 더미 추가
+        force_dummy_its_tool(ws_node, dummy_id="temp")
 
         ws_nodes_to_append.append(ws_node)
 

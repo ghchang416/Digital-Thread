@@ -194,12 +194,12 @@ def ensure_feedrate_reference(
     if cutmode:
         cm = str(cutmode).strip().lower()
         if cm == "climb":
-            ref = "FEED_PER_TOOTH"  # CCP
+            ref = "ccp"  # CCP
         elif cm == "conventional":
-            ref = "FEED_PER_REV"  # TCP
+            ref = "tcp"  # TCP
 
     # 혹시 cutmode 못 찾으면 안전 기본값
-    tech["feedrate_reference"] = ref or "FEED_PER_TOOTH"
+    tech["feedrate_reference"] = ref or "tcp"
 
 
 def derive_tool_element_id_from_mapping(
@@ -282,3 +282,33 @@ def derive_tool_display_name_from_mapping(
 
     val = str(raw).strip()
     return val if val else fallback_display
+
+
+def ensure_dummy_its_tool(ws_node: Dict[str, Any], dummy_id: str = "temp") -> None:
+    op = ws_node.setdefault("its_operation", {})
+    its_tool = op.get("its_tool")
+    if not isinstance(its_tool, dict):
+        op["its_tool"] = {"@xsi:type": "machining_tool", "its_id": dummy_id}
+    else:
+        its_tool.setdefault("@xsi:type", "machining_tool")
+        its_tool.setdefault("its_id", dummy_id)
+
+
+def force_dummy_its_tool(ws_node: Dict[str, Any], dummy_id: str = "temp") -> None:
+    """
+    its_operation 직하 혹은 래핑(MachiningOperation) 내부 어디든
+    its_tool을 '더미'로 **강제 교체**한다.
+    """
+    if not isinstance(ws_node, dict):
+        return
+
+    op = ws_node.get("its_operation")
+    if not isinstance(op, dict):
+        op = {}
+        ws_node["its_operation"] = op
+
+    mo = op.get("MachiningOperation") or op.get("machining_operation")
+    target = mo if isinstance(mo, dict) else op
+
+    # 🔥 무조건 덮어쓰기
+    target["its_tool"] = {"@xsi:type": "machining_tool", "its_id": dummy_id}
