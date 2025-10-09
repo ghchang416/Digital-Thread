@@ -35,6 +35,7 @@ from src.utils.v3_xml_parser import (
     count_workingsteps_in_workplan_xml,
     validate_xml_against_schema,
     inject_cutting_tool_ref,
+    get_nested_value,
 )
 from src.utils.exceptions import CustomException, ExceptionEnum
 from src.utils.file_modifier import read_json_file
@@ -44,10 +45,14 @@ from src.utils.cam_common import (
     build_cutting_tool_13399_dtasset_xml,
     ensure_dummy_secplane,
     ensure_dummy_feature,
-    ensure_feedrate_reference,
     derive_tool_display_name_from_mapping,
-    ensure_dummy_its_tool,
     force_dummy_its_tool,
+    ensure_milling_technology,
+    ensure_milling_machine_functions,
+    find_cam_key_for_coolant,
+    ensure_strategy_with_pathmode,
+    reorder_operation_children,
+    normalize_dt_project_structure,
 )
 from src.utils.cam_nx_adapter import pick_nx_ops
 from src.utils.cam_powermill_adapter import (
@@ -440,6 +445,11 @@ async def apply_cam_into_workplan(
         # its_feature 더미 보강
         ensure_dummy_feature(ws_node)
 
+        # ✅ pathmode 보강(+순서 정렬). CAM 매핑에 있으면 그 값, 없으면 "forward"
+        ensure_strategy_with_pathmode(
+            ws_node, cam_op, cam_to_14649_map, default="forward"
+        )
+
         # feedrate_reference 보강 (cutmode는 ws_node 쪽에서 추출 가능하면 넣고, 없으면 None)
         cutmode = (
             ws_node.get("its_operation", {})
@@ -451,10 +461,26 @@ async def apply_cam_into_workplan(
             .get("FreeformStrategy", {})
             .get("cutmode")
         )
-        ensure_feedrate_reference(ws_node, cutmode=cutmode)
+
+        # ① CAM JSON에서 coolant 원값 뽑기
+        coolant_cam_key = find_cam_key_for_coolant(cam_to_14649_map)
+        raw_coolant = (
+            get_nested_value(cam_op, coolant_cam_key.split("."))
+            if coolant_cam_key
+            else None
+        )
+
+        # ② 밀링 머신 펑션 보강 (bool 변환 + 필수 필드 채우기)
+        ensure_milling_machine_functions(ws_node, raw_coolant, default=False)
 
         # its_tool 더미 추가
         force_dummy_its_tool(ws_node, dummy_id="temp")
+
+        # its_technology, feedrate_reference 보강 + 순서 정렬
+        ensure_milling_technology(ws_node, cutmode=cutmode)
+
+        # ✅ its_operation 순서 재정렬 (ref_dt_cutting_tool 맨 앞)
+        ws_node["its_operation"] = reorder_operation_children(ws_node["its_operation"])
 
         ws_nodes_to_append.append(ws_node)
 
@@ -481,7 +507,12 @@ async def apply_cam_into_workplan(
                 ws_node_dict=ws_node,
             )
 
+        # ✅ 한 방에 전체 정렬
+        updated_xml = normalize_dt_project_structure(updated_xml, project_element_id)
+
         if not validate_xml_against_schema(updated_xml):
+            with open("debug_updated.xml", "w", encoding="utf-8") as f:
+                f.write(updated_xml)
             raise HTTPException(
                 status_code=422, detail="Updated project XML failed schema validation"
             )
@@ -565,94 +596,27 @@ async def apply_cam_into_workplan(
         )
 
 
-@router.get(
-    "/cam-json", summary="지정 프로젝트/워크플랜을 참조하는 NC 파일 존재 여부 확인"
-)
-async def check_cam_json_ref(
-    global_asset_id: str = Query(...),
-    asset_id: str = Query(...),
-    project_element_id: str = Query(
-        ..., alias="element_id"
-    ),  # 클라가 element_id로 주면 여기로 매핑
-    workplan_id: str = Query(...),
-    asset_service: AssetService = Depends(get_asset_service),
-    file_service: FileService = Depends(get_file_service),
+@router.post("/upload-platform")
+async def upload_project_and_refs(
+    global_asset_id: str = Query(..., description="프로젝트 global_asset_id"),
+    asset_id: str = Query(..., description="프로젝트 asset_id"),
+    element_id: str = Query(..., description="프로젝트 element_id"),
     project_service: V3ProjectService = Depends(get_v3_project_service),
-) -> Dict[str, Any]:
-    try:
-        # 1) global_asset_id를 URL로 정규화
-        g_url = project_service.normalize_global_asset_id(global_asset_id)
-        a_id = asset_id  # asset_id는 평문 id로 사용(우리 저장 규칙)
-
-        # 2) 해당 프로젝트/워크플랜이 진짜 있는지(옵션) 먼저 확인하고,
-        #    참조하는 NC 파일을 조회
-        rows: List[dict] = await asset_service.find_nc_files_by_project_ref(
-            global_asset_id=g_url,
-            asset_id=a_id,
-            project_element_id=project_element_id,
-            workplan_id=workplan_id,
-            validate_project_exists=True,
-        )
-
-        # 3) 결과 분기 — 반드시 Dict 리턴 또는 예외
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No NC file referencing project={project_element_id}, wp={workplan_id}",
-            )
-
-        if len(rows) > 1:
-            # 어떤 NC를 써야할지 결정 불가 → 409로 명확히
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Multiple NC files reference the same project/workplan",
-                    "project_element_id": project_element_id,
-                    "workplan_id": workplan_id,
-                    "candidates": [
-                        {
-                            "asset_mongo_id": str(r.get("_id")),
-                            "global_asset_id": r.get("global_asset_id"),
-                            "asset_id": r.get("asset_id"),
-                            "element_id": r.get("element_id"),
-                        }
-                        for r in rows
-                    ],
-                },
-            )
-
-        # 4) 정상 — 단일 결과만 반환
-        r = rows[0]
-        mongo_id = str(r.get("_id"))
-        element_id = r.get("element_id")
-
-        doc = await asset_service.repo.get_asset_by_mongo_id(mongo_id)
-        if not doc or not isinstance(doc.get("data"), str):
-            raise HTTPException(status_code=500, detail="NC asset XML not found")
-
-        nc_oid = extract_dtfile_oid(doc["data"], target_element_id=element_id)
-        if not nc_oid:
-            raise HTTPException(
-                status_code=422, detail="NC file OID not found in asset XML"
-            )
-
-        nc_text = await file_service.get_file_text(nc_oid)
-
-        tc = extract_tool_sequence(nc_text)
-
-        return {"tool_sequence": tc}
-
-    except CustomException as ce:
-        # 우리 커스텀 예외는 FastAPI 예외로 변환해서 raise (반환 X)
-        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
-    except HTTPException:
-        # 위에서 이미 올린 건 그대로 통과
-        raise
-    except Exception as e:
-        # 마지막 보호막: None 리턴되지 않게 500으로 명시
-        raise HTTPException(
-            status_code=500, detail=f"internal-error: {type(e).__name__}: {e}"
-        )
+    file_service: FileService = Depends(get_file_service),
+):
+    """
+    특정 프로젝트와 모든 참조 XML을 데이터 플랫폼에 업로드한다.
+    - 항상 전체 업로드 (dt_file, dt_material, dt_machine_tool, dt_cutting_tool_13399)
+    """
+    # ✅ 서비스에 존재하는 메서드명으로 호출
+    result = await project_service.upload_project_and_related(
+        global_asset_id=global_asset_id,
+        asset_id=asset_id,
+        project_element_id=element_id,
+        file_service=file_service,
+        include_ref_types=None,  # 항상 전체 업로드면 None 유지,
+    )
+    return result
 
 
 @router.get("/{element_id}", response_model=AssetDocument, summary="프로젝트 상세 조회")

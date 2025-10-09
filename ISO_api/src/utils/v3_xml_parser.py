@@ -27,7 +27,7 @@ from src.entities.model_v30 import *
 
 import logging
 
-DEFAULT_SCHEMA_VERSION = "v30"
+DEFAULT_SCHEMA_VERSION = "v31"
 
 # -------- 경로 토크나이저용 정규식 --------
 _INDEX_RE = re.compile(r"^\s*(?P<idx>\d+)\s*$")
@@ -1447,8 +1447,8 @@ def split_dt_asset_xml(xml: str) -> List[str]:
                 "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
                 "@schemaVersion": schema_version,
                 "asset_global_id": global_asset_id,
-                "asset_kind": asset_kind,
                 "id": asset_id,
+                "asset_kind": asset_kind,
                 "dt_elements": e,
             }
         }

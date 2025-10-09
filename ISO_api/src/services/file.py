@@ -321,3 +321,9 @@ class FileService:
         bio = await self.repository.get_file_byteio(file_id)  # BytesIO 반환
         bio.seek(0)
         return bio.read().decode(encoding, errors="ignore")
+
+    async def get_file_bytes(self, file_id: str) -> bytes:
+        """GridFS에서 파일을 읽어 bytes로 반환."""
+        bio = await self.repository.get_file_byteio(file_id)
+        bio.seek(0)
+        return bio.read()

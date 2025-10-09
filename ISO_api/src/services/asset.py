@@ -48,7 +48,7 @@ class AssetService:
     _OID_RE = re.compile(r"^[0-9a-f]{24}$", re.IGNORECASE)
     _GRIDFS_URI_RE = re.compile(r"^gridfs://([0-9a-f]{24})$", re.IGNORECASE)
 
-    DEFAULT_SCHEMA_VERSION = "v30"
+    DEFAULT_SCHEMA_VERSION = "v31"
 
     def __init__(self, collection: AsyncIOMotorCollection):
         self.repo = AssetRepository(collection)
@@ -810,9 +810,9 @@ class AssetService:
                 "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
                 "@schemaVersion": self.DEFAULT_SCHEMA_VERSION,
                 "asset_global_id": global_asset_id,
-                "asset_kind": "instance",
                 # asset_id가 지정됐으면 그걸 root id로, 아니면 AGGREGATED로
                 "id": asset_id or "AGGREGATED",
+                "asset_kind": "instance",
                 "dt_elements": deduped,
             }
         }

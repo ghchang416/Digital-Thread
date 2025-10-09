@@ -474,3 +474,94 @@ class AssetRepository:
         """
         result = await self.collection.delete_one({"_id": ObjectId(mongo_id)})
         return result.deleted_count > 0
+
+    async def set_is_upload_true_by_mongo_id(self, mongo_id: str) -> bool:
+        """
+        업로드 성공 시 문서의 is_upload 플래그를 True로 세팅.
+        """
+        res = await self.collection.update_one(
+            {"_id": ObjectId(mongo_id)}, {"$set": {"is_upload": True}}
+        )
+        return res.modified_count > 0
+
+    async def set_is_upload_true_by_keys(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        type: str,
+        element_id: str,
+    ) -> bool:
+        """
+        키 조합으로 찾아 is_upload=True.
+        """
+        res = await self.collection.update_one(
+            {
+                "global_asset_id": global_asset_id,
+                "asset_id": asset_id,
+                "type": type,
+                "element_id": element_id,
+            },
+            {"$set": {"is_upload": True}},
+        )
+        return res.modified_count > 0
+
+    async def find_nc_files_by_ref(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        project_element_id: str,
+        workplan_id: str,
+        workingstep_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """
+        dt_file 문서들 중에서 reference.keys 안에
+        - DT_GLOBAL_ASSET == global_asset_id
+        - DT_ASSET == asset_id
+        - DT_PROJECT == project_element_id
+        - WORKPLAN == workplan_id
+        - (옵션) WORKINGSTEP == workingstep_id
+        를 모두 포함하는 dt_file들을 찾는다.
+        """
+        conditions = [
+            {"type": "dt_file"},
+            {"category": "NC"},
+            {
+                "data": {
+                    "$regex": f"<key>DT_GLOBAL_ASSET</key>\\s*<value>{re.escape(global_asset_id)}</value>"
+                }
+            },
+            {
+                "data": {
+                    "$regex": f"<key>DT_ASSET</key>\\s*<value>{re.escape(asset_id)}</value>"
+                }
+            },
+            {
+                "data": {
+                    "$regex": f"<key>DT_PROJECT</key>\\s*<value>{re.escape(project_element_id)}</value>"
+                }
+            },
+            {
+                "data": {
+                    "$regex": f"<key>WORKPLAN</key>\\s*<value>{re.escape(workplan_id)}</value>"
+                }
+            },
+        ]
+        if workingstep_id:
+            conditions.append(
+                {
+                    "data": {
+                        "$regex": f"<key>WORKINGSTEP</key>\\s*<value>{re.escape(workingstep_id)}</value>"
+                    }
+                }
+            )
+
+        query = {"$and": conditions}
+        cursor = self.collection.find(
+            query,
+            projection={"_id": 1, "global_asset_id": 1, "asset_id": 1, "element_id": 1},
+            limit=limit,
+        )
+        return await cursor.to_list(length=limit)

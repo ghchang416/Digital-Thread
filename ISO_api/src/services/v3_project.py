@@ -1,9 +1,11 @@
 from typing import Optional, List, Tuple, Dict, Any
 import xmltodict
 import re
+import httpx
+import logging
 
-from pymongo.errors import DuplicateKeyError
 from motor.motor_asyncio import AsyncIOMotorCollection
+from pymongo.errors import DuplicateKeyError
 
 from src.entities.asset import AssetRepository
 from src.utils.v3_xml_parser import (
@@ -12,11 +14,8 @@ from src.utils.v3_xml_parser import (
     get_inner_data,
     pick_dt_project,
     find_workplan_in_project,
-    build_ref_url,
     find_workpiece_in_project,
     find_operation_in_workplan,
-    append_multi_ref,
-    remove_ref_by_uri,
 )
 from src.utils.exceptions import CustomException, ExceptionEnum
 from src.utils.env import get_env_or_default
@@ -26,14 +25,13 @@ from src.schemas.asset import (
     AssetSearchQuery,
     AssetDocument,
 )
-
-import logging
+from src.config import settings
+from src.services.file import FileService
 
 logger = logging.getLogger(__name__)
 
 # 타입/카테고리 규칙
 REF_RULES: Dict[Tuple[str, Optional[str]], Dict[str, Any]] = {
-    # type, category -> anchor, tag, key, requires
     ("dt_machine_tool", None): {
         "anchor": "workplan",
         "tag": "ref_dt_machine_tool",
@@ -66,11 +64,18 @@ class V3ProjectService:
         )
         self.user_prefix = get_env_or_default("DT_USER_PREFIX", "kitech")
 
-    async def exists_by_keys(self, xml_string: str):
-        """
-        xml string에 있는 키 조합이 이미 존재하는지 확인한다.
-        """
+        # DP 설정 (config.py -> Settings에서 로드)
+        self._dp_base = settings.dp_base_url.rstrip("/")
+        self._dp_api_key = settings.dp_api_key
+        self._dp_endpoint_xml = f"{self._dp_base}/openapi/v2/asset/xml"
+        self._dp_endpoint_xml_with_file = (
+            f"{self._dp_base}/openapi/v2/asset/xml-with-file"
+        )
+        self._dp_headers = {"Authorization": self._dp_api_key}
 
+    # ---------------- 기본 조회/생성 ----------------
+
+    async def exists_by_keys(self, xml_string: str):
         meta = extract_dtasset_meta(xml_string=xml_string)
         res = await self.repo.exists_by_keys(
             global_asset_id=meta["global_asset_id"],
@@ -78,13 +83,9 @@ class V3ProjectService:
             type=meta["type"],
             element_id=meta["element_id"],
         )
-
-        # 중복이 없을 경우
         if res is None:
             return False
-        else:
-            # 중복이 있으면 바로 에러로 발생
-            raise CustomException(ExceptionEnum.ASSET_ID_DUPLICATION)
+        raise CustomException(ExceptionEnum.ASSET_ID_DUPLICATION)
 
     async def create_from_xml(self, xml: str):
         if not validate_xml_against_schema(xml):
@@ -92,10 +93,9 @@ class V3ProjectService:
 
         meta = extract_dtasset_meta(xml, strict=True)
 
-        # 🔹 global_asset_id 보정
+        # global_asset_id 정규화
         normalized_global_id = self.normalize_global_asset_id(meta["global_asset_id"])
         if normalized_global_id != meta["global_asset_id"]:
-            # XML 자체도 수정
             doc = xmltodict.parse(xml)
             if "dt_asset" in doc and "asset_global_id" in doc["dt_asset"]:
                 doc["dt_asset"]["asset_global_id"] = normalized_global_id
@@ -107,30 +107,16 @@ class V3ProjectService:
         return await self.repo.insert_asset(req=AssetCreateRequest(xml=xml))
 
     async def list_projects(
-        self,
-        *,
-        global_asset_id: str,
-        asset_id: Optional[str] = None,
+        self, *, global_asset_id: str, asset_id: Optional[str] = None
     ) -> AssetListResponse:
-        """
-        - global_asset_id: 필수
-        - asset_id, type: 선택 필터
-        """
-
         query = AssetSearchQuery(
-            global_asset_id=global_asset_id,
-            asset_id=asset_id,
-            type="dt_project",
+            global_asset_id=global_asset_id, asset_id=asset_id, type="dt_project"
         )
         rows = await self.repo.search_assets(query)
-
-        # Pydantic v1/v2 호환
-        parsed: List[AssetDocument]
         if hasattr(AssetDocument, "model_validate"):  # pydantic v2
             parsed = [AssetDocument.model_validate(r) for r in rows]
-        else:  # pydantic v1
+        else:
             parsed = [AssetDocument.parse_obj(r) for r in rows]
-
         return AssetListResponse(assets=parsed)
 
     async def get_by_keys(
@@ -144,11 +130,9 @@ class V3ProjectService:
         )
 
     async def extract_attribute_path(self, xml_string: str, path: str) -> str:
-        """
-        프로젝트의 속성을 추출한다.
-        """
-
         return get_inner_data(project=xml_string, path=path)
+
+    # ---------------- 참조 추가/삭제 ----------------
 
     async def attach_ref(
         self,
@@ -156,148 +140,16 @@ class V3ProjectService:
         global_asset_id: str,
         asset_id: str,
         project_element_id: str,
-        # 참조 대상
         ref_global_asset_id: str,
         ref_asset_id: str,
         ref_element_id: str,
-        # 타입/카테고리 힌트
         ref_type: str,
         ref_category: Optional[str] = None,
-        # 위치 파라미터(필요할 때만 사용)
         workplan_id: Optional[str] = None,
         workpiece_id: Optional[str] = None,
         workingstep_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        - 프로젝트(dt_project) XML에 참조를 추가(존재하는 앵커만 허용, 생성 없음)
-        - 파일 계열(dt_file: NC/VM/TDMS)은 중복 URI 방지 후 append
-        - 단일 계열(머신툴/머티리얼/커팅툴)은 덮어쓰기
-        """
-        # 0) 프로젝트 문서 조회
-        project_doc = await self.repo.get_asset_by_keys(
-            global_asset_id=global_asset_id,
-            asset_id=asset_id,
-            type="dt_project",
-            element_id=project_element_id,
-        )
-        if not project_doc:
-            raise CustomException(ExceptionEnum.NO_DATA_FOUND)
-
-        # ⛔️ 파일 계열 즉시 거절
-        if ref_type == "dt_file":
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail="project must not reference dt_file; files reference project instead",
-            )
-
-        # 1) 룰 선택
-        rule = REF_RULES.get((ref_type, ref_category))
-        if not rule:
-            # 카테고리 생략했는데 파일 계열일 수 있으니 보정 시도
-            if ref_type == "dt_file" and ref_category:
-                rule = REF_RULES.get((ref_type, ref_category))
-            if not rule:
-                raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-
-        # 2) 필수 파라미터 검사
-        provided_params = {
-            "workplan_id": workplan_id,
-            "workpiece_id": workpiece_id,
-            "workingstep_id": workingstep_id,
-        }
-        unknown = [k for k in rule.get("requires", []) if k not in provided_params]
-        if unknown:
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail=f"rule requires unknown param(s): {unknown}",
-            )
-        missing = [
-            k for k in rule.get("requires", []) if self._blank(provided_params[k])
-        ]
-        if missing:
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail=f"missing required params for {ref_type}{'/' + ref_category if ref_category else ''}: {missing}",
-            )
-
-        # 3) XML 파싱
-        doc = xmltodict.parse(project_doc["data"])
-        dt_proj = pick_dt_project(doc, project_element_id)
-
-        # 4) 앵커 노드 선택 (예외 → 404)
-        try:
-            anchor = rule["anchor"]
-            if anchor == "workplan":
-                target = find_workplan_in_project(dt_proj, workplan_id)
-            elif anchor == "workpiece":
-                target = find_workpiece_in_project(dt_proj, workpiece_id)
-            elif anchor == "operation":
-                wp = find_workplan_in_project(dt_proj, workplan_id)
-                target = find_operation_in_workplan(wp, workingstep_id)
-            else:
-                raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-        except (KeyError, ValueError):
-            # 지정한 workplan/workpiece/workingstep이 존재하지 않을 때
-            raise CustomException(ExceptionEnum.NO_DATA_FOUND)
-
-        # 5) ref 객체 구성
-        uri = build_ref_url(
-            base_uri_prefix=self.base_uri_prefix,
-            user_prefix=self.user_prefix,
-            ref_global_asset_id=ref_global_asset_id,
-            ref_asset_id=ref_asset_id,
-            ref_element_id=ref_element_id,
-        )
-        ref_obj = {"keys": [{"key": rule["key"], "value": uri}]}
-
-        # 6) 적용
-        tag = rule["tag"]
-        if rule.get("multi"):  # 파일 계열 → 중복 방지 append
-            changed = append_multi_ref(target, tag, ref_obj)
-            if not changed:
-                # 같은 URI가 이미 존재
-                raise CustomException(ExceptionEnum.REF_ALREADY_EXISTS)
-        else:  # 단일 → 덮어쓰기
-            before = target.get(tag)
-            target[tag] = ref_obj
-            changed = before != ref_obj
-
-        # 7) 저장
-        if changed:
-            new_xml = xmltodict.unparse(doc)
-            await self.repo.update_asset_xml_by_mongo_id(
-                str(project_doc["_id"]), new_xml
-            )
-
-        return {
-            "updated": bool(changed),
-            "project_mongo_id": str(project_doc["_id"]),
-        }
-
-    async def remove_ref(
-        self,
-        *,
-        global_asset_id: str,
-        asset_id: str,
-        project_element_id: str,
-        # 참조 대상
-        ref_global_asset_id: str,
-        ref_asset_id: str,
-        ref_element_id: str,
-        # 타입/카테고리 힌트
-        ref_type: str,
-        ref_category: Optional[str] = None,
-        # 위치 파라미터(필요할 때만 사용)
-        workplan_id: Optional[str] = None,
-        workpiece_id: Optional[str] = None,
-        workingstep_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        - 프로젝트(dt_project) XML에서 참조(URI) 삭제
-        - 추가 API와 동일한 파라미터 사용
-        - 삭제 대상이 없으면 REF_NOT_FOUND
-        """
-        # 0) 프로젝트 문서 조회
+        # 프로젝트 존재 확인
         project_doc = await self.repo.get_asset_by_keys(
             global_asset_id=global_asset_id,
             asset_id=asset_id,
@@ -308,176 +160,1006 @@ class V3ProjectService:
             raise CustomException(
                 ExceptionEnum.NO_DATA_FOUND, detail="project not found by keys"
             )
-        # ⛔️ 파일 계열 즉시 거절
-        if ref_type == "dt_file":
-            # 과거에 잘못 저장된 파일 레퍼런스를 정리해야 한다면,
-            # 별도의 정리 유틸을 만들어 직접 제거하세요(아래 주석 참고).
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail="project no longer manages dt_file references",
-            )
 
-        # 1) 룰 선택 (파일 계열은 ref_category로 세분)
+        # dt_file → 파일이 프로젝트를 참조
+        if (ref_type or "").strip() == "dt_file":
+            if not workplan_id:
+                raise CustomException(
+                    ExceptionEnum.INVALID_ATTRIBUTE,
+                    detail="workplan_id required for dt_file reference",
+                )
+            file_doc = await self.repo.get_asset_by_keys(
+                global_asset_id=ref_global_asset_id,
+                asset_id=ref_asset_id,
+                type="dt_file",
+                element_id=ref_element_id,
+            )
+            if not file_doc:
+                raise CustomException(
+                    ExceptionEnum.NO_DATA_FOUND, detail="dt_file not found by keys"
+                )
+            doc = xmltodict.parse(file_doc["data"])
+            node = self._pick_dt_file_node(doc, ref_element_id)
+            changed = self._ensure_file_references_project(
+                node,
+                project_global_asset_id=self.normalize_global_asset_id(global_asset_id),
+                project_asset_id=asset_id,
+                project_element_id=project_element_id,
+                workplan_id=workplan_id,
+                workingstep_id=workingstep_id,
+            )
+            if not changed:
+                raise CustomException(ExceptionEnum.REF_ALREADY_EXISTS)
+            new_xml = xmltodict.unparse(doc)
+            await self.repo.update_asset_xml_by_mongo_id(str(file_doc["_id"]), new_xml)
+            return {"updated": True, "file_mongo_id": str(file_doc["_id"])}
+
+        # 비-파일 타입
         rule = REF_RULES.get((ref_type, ref_category))
         if not rule:
-            if ref_type == "dt_file" and ref_category:
-                rule = REF_RULES.get((ref_type, ref_category))
-        if not rule:
-            msg = f"unsupported ref_type/category: ({ref_type}, {ref_category})"
-            raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE, detail=msg)
+            raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
 
-        # 2) 필수 파라미터 검사
-        provided_params = {
+        provided = {
             "workplan_id": workplan_id,
             "workpiece_id": workpiece_id,
             "workingstep_id": workingstep_id,
         }
-        unknown = [k for k in rule.get("requires", []) if k not in provided_params]
-        if unknown:
-            # 룰 정의가 잘못된 경우(디버깅용)
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail=f"rule requires unknown param(s): {unknown}",
-            )
-        missing = [
-            k for k in rule.get("requires", []) if self._blank(provided_params[k])
-        ]
+        required = list(rule.get("requires", []))
+        if ref_type == "dt_material" and "workpiece_id" in required:
+            required.remove("workpiece_id")
+        missing = [k for k in required if not provided.get(k)]
         if missing:
             raise CustomException(
                 ExceptionEnum.INVALID_ATTRIBUTE,
                 detail=f"missing required params for {ref_type}{'/' + ref_category if ref_category else ''}: {missing}",
             )
 
-        # 3) XML 파싱 및 project 선택
         doc = xmltodict.parse(project_doc["data"])
         dt_proj = pick_dt_project(doc, project_element_id)
 
-        # 4) 앵커 노드 선택 (존재 필수)
-        anchor = rule["anchor"]
-        if anchor == "workplan":
+        if rule["anchor"] == "workplan":
             target = find_workplan_in_project(dt_proj, workplan_id)
-        elif anchor == "workpiece":
-            target = find_workpiece_in_project(dt_proj, workpiece_id)
-        elif anchor == "operation":
+        elif rule["anchor"] == "workpiece":
+            target = (
+                self._ensure_workpiece_and_get(dt_proj, workpiece_id)
+                if ref_type == "dt_material"
+                else find_workpiece_in_project(dt_proj, workpiece_id)
+            )
+        elif rule["anchor"] == "operation":
             wp = find_workplan_in_project(dt_proj, workplan_id)
             target = find_operation_in_workplan(wp, workingstep_id)
         else:
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE, detail="anchor node not found"
-            )
-
-        # 5) 삭제할 URI 구성 (추가 때와 동일 포맷)
-        uri = build_ref_url(
-            base_uri_prefix=self.base_uri_prefix,
-            user_prefix=self.user_prefix,
-            ref_global_asset_id=ref_global_asset_id,
-            ref_asset_id=ref_asset_id,
-            ref_element_id=ref_element_id,
-        )
-
-        tag = rule["tag"]
-
-        # 6) 삭제 수행
-        removed = remove_ref_by_uri(target, tag, uri)
-
-        if not removed:
-            # 같은 위치/태그에 그 URI가 없었음
-            raise CustomException(
-                ExceptionEnum.REF_NOT_FOUND, detail=f"reference tag not found: {tag}"
-            )
-
-        # 7) 저장
-        new_xml = xmltodict.unparse(doc)
-        await self.repo.update_asset_xml_by_mongo_id(str(project_doc["_id"]), new_xml)
-
-        return {
-            "removed": True,
-            "project_mongo_id": str(project_doc["_id"]),
-        }
-
-    # --- 내부 유틸 ---
-    def _get_ref_rule(
-        self, ref_type: str, ref_category: Optional[str]
-    ) -> Dict[str, Any]:
-        if ref_type == "dt_file":
-            raise CustomException(
-                ExceptionEnum.INVALID_ATTRIBUTE,
-                detail="project must not reference dt_file",
-            )
-        key = (ref_type, (ref_category.upper() if ref_category else None))
-        try:
-            return REF_RULES[key]
-        except KeyError:
-            # 카테고리가 필수인데 안 들어온 경우 등도 여기서 걸림
             raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
 
-    def _select_anchor_node(
+        full_uri = self._build_element_fullpath(
+            ref_global_asset_id, ref_asset_id, ref_element_id
+        )
+        tag = rule["tag"]
+
+        if self._has_fullpath(target, tag, full_uri):
+            raise CustomException(ExceptionEnum.REF_ALREADY_EXISTS)
+
+        prefix_map = {
+            "ref_dt_machine_tool": "machine-tool",
+            "ref_dt_material": "material",
+            "ref_dt_cutting_tool": "cutting-tool",
+        }
+        display_map = {
+            "dt_machine_tool": "Machine Tool Ref",
+            "dt_material": "Material Ref",
+            "dt_cutting_tool_13399": "Cutting Tool Ref",
+        }
+        prefix = prefix_map.get(tag, "reference")
+        display = display_map.get(ref_type, "Reference")
+
+        element_id_auto = self._next_ref_element_id(target, tag, prefix)
+        ref_obj = self._make_element_ref(
+            element_id=element_id_auto,
+            display_name=display,
+            type_name=ref_type,
+            full_uri=full_uri,
+        )
+
+        target[tag] = ref_obj
+
+        # workplan의 machine tool ref는 맨 아래로
+        if rule["anchor"] == "workplan" and tag == "ref_dt_machine_tool":
+            self._move_child_to_end(target, tag)
+
+        new_xml = xmltodict.unparse(doc)
+        await self.repo.update_asset_xml_by_mongo_id(str(project_doc["_id"]), new_xml)
+        return {"updated": True, "project_mongo_id": str(project_doc["_id"])}
+
+    async def remove_ref(
         self,
-        project_node: Dict[str, Any],
-        rule: Dict[str, Any],
         *,
-        workplan_id: Optional[str],
-        workpiece_id: Optional[str],
-        workingstep_id: Optional[str],
-    ) -> Dict[str, Any]:
-        anchor = rule["anchor"]
-        if anchor == "workplan":
-            if not workplan_id:
-                raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-            return find_workplan_in_project(
-                project_node, workplan_id
-            )  # (메인/its_elements 둘 다 탐색하는 버전)
-        if anchor == "workpiece":
-            if not workpiece_id:
-                raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-            return find_workpiece_in_project(
-                project_node, workpiece_id
-            )  # 존재해야 함(생성 X)
-        if anchor == "operation":
-            if not (workplan_id and workingstep_id):
-                raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-            wp = find_workplan_in_project(project_node, workplan_id)
-            return find_operation_in_workplan(
-                wp, workingstep_id
-            )  # WS/OP 존재해야 함(생성 X)
-        raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
-
-    def _blank(self, x):
-        return x is None or (isinstance(x, str) and x.strip() == "")
-
-    async def get_nc_files_by_project(
-        self,
         global_asset_id: str,
         asset_id: str,
         project_element_id: str,
-        workplan_id: str,
+        ref_global_asset_id: str,
+        ref_asset_id: str,
+        ref_element_id: str,
+        ref_type: str,
+        ref_category: Optional[str] = None,
+        workplan_id: Optional[str] = None,
+        workpiece_id: Optional[str] = None,
+        workingstep_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        지정된 프로젝트/워크플랜을 참조하는 NC 파일(dt_file)들을 검색해서 반환.
-        """
-        rows = await self.repo.find_nc_files_by_ref(
+        if (ref_type or "").strip() == "dt_file":
+            if not workplan_id:
+                raise CustomException(
+                    ExceptionEnum.INVALID_ATTRIBUTE,
+                    detail="workplan_id required for dt_file removal",
+                )
+            file_doc = await self.repo.get_asset_by_keys(
+                global_asset_id=ref_global_asset_id,
+                asset_id=ref_asset_id,
+                type="dt_file",
+                element_id=ref_element_id,
+            )
+            if not file_doc:
+                raise CustomException(
+                    ExceptionEnum.NO_DATA_FOUND, detail="dt_file not found by keys"
+                )
+            doc = xmltodict.parse(file_doc["data"])
+            node = self._pick_dt_file_node(doc, ref_element_id)
+            removed = self._remove_project_reference_from_file(
+                node,
+                project_global_asset_id=self.normalize_global_asset_id(global_asset_id),
+                project_asset_id=asset_id,
+                project_element_id=project_element_id,
+                workplan_id=workplan_id,
+                workingstep_id=workingstep_id,
+            )
+            if not removed:
+                raise CustomException(
+                    ExceptionEnum.REF_NOT_FOUND, detail="reference not found in dt_file"
+                )
+            new_xml = xmltodict.unparse(doc)
+            await self.repo.update_asset_xml_by_mongo_id(str(file_doc["_id"]), new_xml)
+            return {"removed": True, "file_mongo_id": str(file_doc["_id"])}
+
+        project_doc = await self.repo.get_asset_by_keys(
             global_asset_id=global_asset_id,
             asset_id=asset_id,
-            project_element_id=project_element_id,
-            workplan_id=workplan_id,
+            type="dt_project",
+            element_id=project_element_id,
         )
-
-        if not rows:
+        if not project_doc:
             raise CustomException(
-                ExceptionEnum.NC_NOT_EXIST,
-                f"No NC file referencing project={project_element_id}, wp={workplan_id}",
+                ExceptionEnum.NO_DATA_FOUND, detail="project not found by keys"
             )
 
-        return {"count": len(rows), "items": rows}
+        rule = REF_RULES.get((ref_type, ref_category))
+        if not rule:
+            raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
+
+        provided = {
+            "workplan_id": workplan_id,
+            "workpiece_id": workpiece_id,
+            "workingstep_id": workingstep_id,
+        }
+        missing = [k for k in rule.get("requires", []) if not provided.get(k)]
+        if missing:
+            raise CustomException(
+                ExceptionEnum.INVALID_ATTRIBUTE,
+                detail=f"missing required params for {ref_type}{'/' + ref_category if ref_category else ''}: {missing}",
+            )
+
+        doc = xmltodict.parse(project_doc["data"])
+        dt_proj = pick_dt_project(doc, project_element_id)
+        if rule["anchor"] == "workplan":
+            target = find_workplan_in_project(dt_proj, workplan_id)
+        elif rule["anchor"] == "workpiece":
+            target = find_workpiece_in_project(dt_proj, workpiece_id)
+        elif rule["anchor"] == "operation":
+            wp = find_workplan_in_project(dt_proj, workplan_id)
+            target = find_operation_in_workplan(wp, workingstep_id)
+        else:
+            raise CustomException(ExceptionEnum.INVALID_ATTRIBUTE)
+
+        tag = rule["tag"]
+        full_uri = self._build_element_fullpath(
+            ref_global_asset_id, ref_asset_id, ref_element_id
+        )
+
+        removed = False
+        cur = target.get(tag)
+        if isinstance(cur, dict):
+            k = cur.get("keys")
+            vals = [k] if isinstance(k, dict) else (k if isinstance(k, list) else [])
+            hit = any(
+                isinstance(kv, dict)
+                and kv.get("key") == "DT_ELEMENT_FULLPATH"
+                and kv.get("value") == full_uri
+                for kv in vals
+            )
+            if hit:
+                target.pop(tag, None)
+                removed = True
+        elif isinstance(cur, list):
+            kept = []
+            for ref in cur:
+                k = ref.get("keys") if isinstance(ref, dict) else None
+                kvs = [k] if isinstance(k, dict) else (k if isinstance(k, list) else [])
+                hit = any(
+                    isinstance(kv, dict)
+                    and kv.get("key") == "DT_ELEMENT_FULLPATH"
+                    and kv.get("value") == full_uri
+                    for kv in kvs
+                )
+                if not hit:
+                    kept.append(ref)
+            if len(kept) != len(cur):
+                removed = True
+                target[tag] = kept if kept else target.pop(tag, None)
+
+        if not removed:
+            raise CustomException(
+                ExceptionEnum.REF_NOT_FOUND,
+                detail=f"reference not found for FULLPATH={full_uri}",
+            )
+
+        new_xml = xmltodict.unparse(doc)
+        await self.repo.update_asset_xml_by_mongo_id(str(project_doc["_id"]), new_xml)
+        return {"removed": True, "project_mongo_id": str(project_doc["_id"])}
+
+    # ---------------- DP 업로드 ----------------
+
+    async def _dp_upload_xml(self, xml_text: str) -> dict:
+        """
+        XML만 있는 자산 업로드. 서버 설정 차이를 대비해 다음 순서로 폴백 시도:
+        1) application/xml (raw body = XML 원문)   ← 스웨거 캡처와 정확히 일치
+        2) text/xml                                ← 어떤 배포에서는 text/xml만 허용
+        3) multipart/form-data (assetData 파트)    ← 이전 서버 스펙용
+        4) application/x-www-form-urlencoded       ← 폼으로만 받는 경우
+        5) text/plain
+        6) application/json (assetData 래핑)
+        """
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            # 1) application/xml (raw body)
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers={**self._dp_headers, "Content-Type": "application/xml"},
+                content=xml_text,
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "body": self._safe_body(resp),
+                }
+
+            # 2) text/xml (raw body)
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers={**self._dp_headers, "Content-Type": "text/xml"},
+                content=xml_text,
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "body": self._safe_body(resp),
+                }
+
+            # 3) multipart/form-data (assetData 파트에 원문)
+            files = [("assetData", (None, xml_text, "application/xml"))]
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers=self._dp_headers,  # Authorization 만
+                files=files,
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "body": self._safe_body(resp),
+                }
+
+            # 4) application/x-www-form-urlencoded
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers={
+                    **self._dp_headers,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"assetData": xml_text},
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "body": self._safe_body(resp),
+                }
+
+            # 5) text/plain
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers={**self._dp_headers, "Content-Type": "text/plain"},
+                content=xml_text,
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "body": self._safe_body(resp),
+                }
+
+            # 6) application/json (마지막 폴백)
+            resp = await client.post(
+                self._dp_endpoint_xml,
+                headers={**self._dp_headers, "Content-Type": "application/json"},
+                json={"assetData": xml_text},
+            )
+            return {
+                "ok": resp.status_code in (200, 201),
+                "status": resp.status_code,
+                "body": self._safe_body(resp),
+            }
+
+    async def _dp_upload_xml_with_file(
+        self, xml_text: str, files: List[tuple[str, bytes]]
+    ) -> dict:
+        """
+        /openapi/v2/asset/xml-with-file : multipart/form-data
+        - files: 여러 개 파일 파트
+        - xmlData: XML 텍스트 (text/plain)
+        """
+        multipart = []
+        for fname, content in files:
+            multipart.append(("files", (fname, content, "application/octet-stream")))
+        multipart.append(("xmlData", (None, xml_text, "application/xml")))
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                self._dp_endpoint_xml_with_file,
+                headers=self._dp_headers,
+                files=multipart,
+            )
+        ok = resp.status_code in (200, 201)
+        return {"ok": ok, "status": resp.status_code, "body": self._safe_body(resp)}
+
+    def _safe_body(self, resp: httpx.Response):
+        ctype = resp.headers.get("content-type", "")
+        if "application/json" in ctype:
+            try:
+                return resp.json()
+            except Exception:
+                return resp.text
+        return resp.text
+
+    async def upload_project_and_related(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        project_element_id: str,
+        file_service: FileService,
+        include_ref_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        프로젝트 + 모든 관련 참조 자산 업로드 (필터 미사용 시 전체).
+        - dt_file은 파일 OID가 있으면 xml-with-file, 없으면 xml만
+        - 파일 OID가 있는데 실제 파일이 없으면 실패로 집계
+        - 업로드 성공 시 각 문서 is_upload = True
+        """
+        include_ref_types = include_ref_types or [
+            "dt_file",
+            "dt_material",
+            "dt_machine_tool",
+            "dt_cutting_tool_13399",
+        ]
+
+        # 프로젝트 조회
+        project_doc = await self.repo.get_asset_by_keys(
+            global_asset_id=global_asset_id,
+            asset_id=asset_id,
+            type="dt_project",
+            element_id=project_element_id,
+        )
+        if not project_doc:
+            return {"ok": False, "error": "project_not_found"}
+
+        results: Dict[str, Any] = {"project": None, "related": []}
+
+        # 프로젝트 XML 업로드
+        proj_xml: str = project_doc.get("data", "")
+        proj_up = await self._dp_upload_xml(proj_xml)
+        if proj_up["ok"]:
+            await self.repo.set_is_upload_true_by_mongo_id(str(project_doc["_id"]))
+        results["project"] = proj_up
+
+        # 관련 자산 수집
+        related_assets = await self._collect_related_assets_by_project_xml(
+            proj_xml, global_asset_id, asset_id, project_element_id, include_ref_types
+        )
+
+        # 중복 제거 (type, global, asset, element 기준)
+        unique = set()
+        deduped = []
+        for it in related_assets:
+            key = (it["type"], it["global_asset_id"], it["asset_id"], it["element_id"])
+            if key in unique:
+                continue
+            unique.add(key)
+            deduped.append(it)
+        related_assets = deduped
+
+        # 업로드 실행
+        for item in related_assets:
+            doc = await self.repo.get_asset_by_keys(
+                global_asset_id=item["global_asset_id"],
+                asset_id=item["asset_id"],
+                type=item["type"],
+                element_id=item["element_id"],
+            )
+            if not doc:
+                results["related"].append(
+                    {
+                        **item,
+                        "ok": False,
+                        "status": 404,
+                        "error": "related_asset_not_found",
+                    }
+                )
+                continue
+
+            xml_text = doc.get("data", "")
+
+            if item["type"] == "dt_file":
+                try:
+                    node = self._pick_dt_file_node(
+                        xmltodict.parse(xml_text), item["element_id"]
+                    )
+                    file_oid = self._extract_file_oid_from_dt_file_node(node)
+
+                    # ✅ 파일명은 display_name 기반
+                    display_name = node.get("display_name") or node.get("element_id")
+
+                    if file_oid:
+                        # FileService 통해 GridFS에서 바이너리 읽기
+                        bio = await file_service.repository.get_file_byteio(file_oid)
+                        bin_bytes = bio.getvalue()
+
+                        # display_name을 파일 이름으로 사용
+                        up = await self._dp_upload_xml_with_file(
+                            xml_text, [(display_name, bin_bytes)]
+                        )
+                    else:
+                        up = await self._dp_upload_xml(xml_text)
+                except Exception as e:
+                    results["related"].append(
+                        {
+                            **item,
+                            "ok": False,
+                            "status": 500,
+                            "error": f"upload_exception: {e}",
+                        }
+                    )
+                    continue
+            else:
+                up = await self._dp_upload_xml(xml_text)
+
+            if up["ok"]:
+                await self.repo.set_is_upload_true_by_mongo_id(str(doc["_id"]))
+            results["related"].append({**item, **up})
+
+        return results
+
+    # ---------------- 수집/파싱 유틸 ----------------
+
+    async def _collect_related_assets_by_project_xml(
+        self,
+        project_xml: str,
+        global_asset_id: str,
+        asset_id: str,
+        project_element_id: str,
+        include_ref_types: List[str],
+    ) -> List[Dict[str, str]]:
+        related: List[Dict[str, str]] = []
+        doc = xmltodict.parse(project_xml)
+        proj = (doc.get("dt_asset") or {}).get("dt_elements")
+        if not isinstance(proj, dict) or (proj.get("@xsi:type") != "dt_project"):
+            return related
+
+        # dt_material
+        if "dt_material" in include_ref_types:
+            related.extend(self._collect_refs_in_workpieces(proj))
+
+        # dt_machine_tool
+        if "dt_machine_tool" in include_ref_types:
+            related.extend(self._collect_ref_in_workplan_machine_tool(proj))
+
+        # dt_cutting_tool_13399
+        if "dt_cutting_tool_13399" in include_ref_types:
+            related.extend(self._collect_refs_in_workingsteps_tools(proj))
+
+        # dt_file (NC) — 프로젝트를 참조하는 파일들을 리포지토리에서 찾아서 추가
+        if "dt_file" in include_ref_types:
+            wp_ids = self._extract_workplan_ids_from_project_xml(project_xml)
+            for wp_id in wp_ids:
+                try:
+                    rows = await self.repo.find_nc_files_by_ref(
+                        global_asset_id=global_asset_id,
+                        asset_id=asset_id,
+                        project_element_id=project_element_id,
+                        workplan_id=wp_id,
+                        workingstep_id=None,  # 필요 시 확장
+                    )
+                    for r in rows:
+                        related.append(
+                            {
+                                "type": r.get("type") or "dt_file",
+                                "global_asset_id": r["global_asset_id"],
+                                "asset_id": r["asset_id"],
+                                "element_id": r["element_id"],
+                            }
+                        )
+                except Exception:
+                    logging.exception(
+                        "find_nc_files_by_ref failed for workplan_id=%s", wp_id
+                    )
+
+        # 최종 중복 제거
+        dedup = []
+        seen = set()
+        for it in related:
+            key = (it["type"], it["global_asset_id"], it["asset_id"], it["element_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append(it)
+        return dedup
+
+    def _collect_workplan_ids_from_project(self, proj_node: dict) -> List[str]:
+        ids: List[str] = []
+        mw = proj_node.get("main_workplan")
+        if isinstance(mw, dict):
+            wid = mw.get("its_id")
+            if isinstance(wid, str) and wid.strip():
+                ids.append(wid.strip())
+        # (추가 워크플랜이 있다면 여기에 파싱 로직 보강)
+        return ids
+
+    def _safe_get(self, d: dict, path: List[str]):
+        cur = d
+        for k in path:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(k)
+        return cur
+
+    def _collect_refs_in_workpieces(self, proj: dict) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        wps = proj.get("its_workpieces")
+        if not isinstance(wps, dict):
+            return out
+        ref = wps.get("ref_dt_material")
+        if not ref:
+            return out
+        uri = self._extract_full_uri_from_ref(ref)
+        if uri:
+            out.append(self._split_full_uri_to_keys("dt_material", uri))
+        return out
+
+    def _collect_ref_in_workplan_machine_tool(self, proj: dict) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        wp = proj.get("main_workplan")
+        if not isinstance(wp, dict):
+            return out
+        ref = wp.get("ref_dt_machine_tool")
+        if not ref:
+            return out
+        uri = self._extract_full_uri_from_ref(ref)
+        if uri:
+            out.append(self._split_full_uri_to_keys("dt_machine_tool", uri))
+        return out
+
+    def _collect_refs_in_workingsteps_tools(self, proj: dict) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        wp = proj.get("main_workplan")
+        elems = wp.get("its_elements") if isinstance(wp, dict) else None
+        elems = (
+            elems
+            if isinstance(elems, list)
+            else ([elems] if isinstance(elems, dict) else [])
+        )
+        for ws in elems:
+            op = ws.get("its_operation") if isinstance(ws, dict) else None
+            if not isinstance(op, dict):
+                continue
+            ref = op.get("ref_dt_cutting_tool")
+            if not ref:
+                continue
+            uri = self._extract_full_uri_from_ref(ref)
+            if uri:
+                out.append(self._split_full_uri_to_keys("dt_cutting_tool_13399", uri))
+        return out
+
+    def _extract_full_uri_from_ref(self, ref_node: dict) -> Optional[str]:
+        ks = ref_node.get("keys")
+        if not ks:
+            return None
+        items = ks if isinstance(ks, list) else [ks]
+        for it in items:
+            val = it.get("value")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return None
+
+    def _split_full_uri_to_keys(
+        self, guessed_type: str, full_uri: str
+    ) -> Dict[str, str]:
+        parts = full_uri.strip("/").split("/")
+        if len(parts) < 3:
+            return {
+                "type": guessed_type,
+                "global_asset_id": "",
+                "asset_id": "",
+                "element_id": "",
+            }
+        return {
+            "type": guessed_type,
+            "global_asset_id": "/".join(parts[:-2]),
+            "asset_id": parts[-2],
+            "element_id": parts[-1],
+        }
+
+    # ---------------- dt_file 유틸 ----------------
+
+    def _as_list(self, v):
+        if v is None:
+            return []
+        return v if isinstance(v, list) else [v]
+
+    def _pick_dt_file_node(self, doc: dict, target_element_id: str) -> dict:
+        dt_asset = doc.get("dt_asset") or doc
+        elems = self._as_list(dt_asset.get("dt_elements"))
+        for e in elems:
+            if not isinstance(e, dict):
+                continue
+            t = e.get("@xsi:type") or e.get("xsi:type")
+            if t == "dt_file" and e.get("element_id") == target_element_id:
+                return e
+        raise CustomException(
+            ExceptionEnum.NO_DATA_FOUND,
+            detail=f"dt_file(element_id='{target_element_id}') not found",
+        )
+
+    def _extract_file_oid_from_dt_file_node(self, file_node: dict) -> Optional[str]:
+        if not isinstance(file_node, dict):
+            return None
+        v = file_node.get("value")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return None
+
+    def _ensure_file_references_project(
+        self,
+        file_node: dict,
+        *,
+        project_global_asset_id: str,
+        project_asset_id: str,
+        project_element_id: str,
+        workplan_id: str,
+        workingstep_id: Optional[str] = None,
+    ) -> bool:
+        if not isinstance(file_node, dict):
+            return False
+        ref = file_node.get("reference")
+        if not isinstance(ref, dict):
+            ref = {}
+            file_node["reference"] = ref
+        keys_list = self._as_list(ref.get("keys"))
+
+        def has_kv(k, v):
+            for kv in keys_list:
+                if isinstance(kv, dict) and kv.get("key") == k and kv.get("value") == v:
+                    return True
+            return False
+
+        desired = [
+            ("DT_GLOBAL_ASSET", project_global_asset_id),
+            ("DT_ASSET", project_asset_id),
+            ("DT_PROJECT", project_element_id),
+            ("WORKPLAN", workplan_id),
+        ]
+        if workingstep_id:
+            desired.append(("WORKINGSTEP", workingstep_id))
+
+        changed = False
+        for k, v in desired:
+            if not has_kv(k, v):
+                keys_list.append({"key": k, "value": v})
+                changed = True
+
+        ref["keys"] = keys_list[0] if len(keys_list) == 1 else keys_list
+        return changed
+
+    def _remove_project_reference_from_file(
+        self,
+        file_node: dict,
+        *,
+        project_global_asset_id: str,
+        project_asset_id: str,
+        project_element_id: str,
+        workplan_id: str,
+        workingstep_id: Optional[str] = None,
+    ) -> bool:
+        ref = file_node.get("reference")
+        if not isinstance(ref, dict):
+            return False
+        keys_list = self._as_list(ref.get("keys"))
+        if not keys_list:
+            return False
+
+        targets = {
+            ("DT_GLOBAL_ASSET", project_global_asset_id),
+            ("DT_ASSET", project_asset_id),
+            ("DT_PROJECT", project_element_id),
+            ("WORKPLAN", workplan_id),
+        }
+        if workingstep_id:
+            targets.add(("WORKINGSTEP", workingstep_id))
+
+        def is_target(kv):
+            if not isinstance(kv, dict):
+                return False
+            return (kv.get("key"), kv.get("value")) in targets
+
+        kept = [kv for kv in keys_list if not is_target(kv)]
+        removed = len(kept) != len(keys_list)
+        if not removed:
+            return False
+        if kept:
+            ref["keys"] = kept[0] if len(kept) == 1 else kept
+        else:
+            file_node.pop("reference", None)
+        return True
+
+    # ---------------- 공통 유틸 ----------------
 
     def normalize_global_asset_id(self, global_asset_id: str) -> str:
-        """
-        global_asset_id가 URI 형태인지 검사 후,
-        아니라면 base_uri_prefix + user_prefix를 붙여서 URI로 변환한다.
-        """
         if global_asset_id.startswith("http://") or global_asset_id.startswith(
             "https://"
         ):
             return global_asset_id
-        # 기본 prefix 붙여서 URI로 만듦
         return f"{self.base_uri_prefix}/{self.user_prefix}/{global_asset_id}"
+
+    def _build_element_fullpath(
+        self, ref_global_asset_id: str, ref_asset_id: str, ref_element_id: str
+    ) -> str:
+        base = ref_global_asset_id.strip()
+        if not (base.startswith("http://") or base.startswith("https://")):
+            base = f"{self.base_uri_prefix}/{self.user_prefix}/{base}"
+        return f"{base.rstrip('/')}/{ref_asset_id}/{ref_element_id}"
+
+    def _next_ref_element_id(self, container: dict, tag: str, prefix: str) -> str:
+        items = container.get(tag)
+        if items is None:
+            return f"{prefix}-001"
+        if isinstance(items, dict):
+            items = [items]
+        mx = 0
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            eid = (it.get("element_id") or "").strip()
+            m = re.fullmatch(rf"{re.escape(prefix)}-(\d+)", eid)
+            if m:
+                mx = max(mx, int(m.group(1)))
+        return f"{prefix}-{mx+1:03d}"
+
+    def _make_element_ref(
+        self, *, element_id: str, display_name: str, type_name: str, full_uri: str
+    ) -> dict:
+        return {
+            "element_id": element_id,
+            "category": "reference",
+            "display_name": display_name,
+            "element_description": f"Reference to {type_name}",
+            "keys": {"key": "DT_ELEMENT_FULLPATH", "value": full_uri},
+        }
+
+    def _ref_list(self, node: dict, tag: str):
+        cur = node.get(tag)
+        if cur is None:
+            return []
+        return cur if isinstance(cur, list) else [cur]
+
+    def _has_fullpath(self, node: dict, tag: str, fullpath: str) -> bool:
+        for ref in self._ref_list(node, tag):
+            if not isinstance(ref, dict):
+                continue
+            k = ref.get("keys")
+            if isinstance(k, dict):
+                if k.get("key") == "DT_ELEMENT_FULLPATH" and k.get("value") == fullpath:
+                    return True
+            elif isinstance(k, list):
+                for kv in k:
+                    if (
+                        isinstance(kv, dict)
+                        and kv.get("key") == "DT_ELEMENT_FULLPATH"
+                        and kv.get("value") == fullpath
+                    ):
+                        return True
+        return False
+
+    def _next_workpiece_id(self, project_node: dict, prefix: str = "workpiece") -> str:
+        items = project_node.get("its_workpieces")
+        if items is None:
+            return f"{prefix}-001"
+        items = items if isinstance(items, list) else [items]
+        mx = 0
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            wp = it.get("workpiece") if isinstance(it.get("workpiece"), dict) else it
+            wid = (wp.get("its_id") or "").strip()
+            m = re.fullmatch(rf"{re.escape(prefix)}-(\d+)", wid)
+            if m:
+                mx = max(mx, int(m.group(1)))
+        return f"{prefix}-{mx+1:03d}"
+
+    def _ensure_workpiece_and_get(
+        self, project_node: dict, workpiece_id: Optional[str]
+    ) -> dict:
+        if workpiece_id:
+            try:
+                return find_workpiece_in_project(project_node, workpiece_id)
+            except Exception:
+                new_wp = {"its_id": workpiece_id}
+                cur = project_node.get("its_workpieces")
+                if cur is None:
+                    project_node["its_workpieces"] = [new_wp]
+                elif isinstance(cur, list):
+                    cur.append(new_wp)
+                else:
+                    project_node["its_workpieces"] = [cur, new_wp]
+                return new_wp
+
+        auto_id = self._next_workpiece_id(project_node)
+        new_wp = {"its_id": auto_id}
+        cur = project_node.get("its_workpieces")
+        if cur is None:
+            project_node["its_workpieces"] = [new_wp]
+        elif isinstance(cur, list):
+            cur.append(new_wp)
+        else:
+            project_node["its_workpieces"] = [cur, new_wp]
+        return new_wp
+
+    def _move_child_to_end(self, parent: dict, key: str) -> None:
+        if isinstance(parent, dict) and key in parent:
+            val = parent.pop(key)
+            parent[key] = val
+
+    def _extract_workplan_ids(self, project_xml: str) -> list[str]:
+        try:
+            doc = xmltodict.parse(project_xml)
+            proj = doc.get("dt_asset", {}).get("dt_elements", {})
+            wp = proj.get("main_workplan") or {}
+            its_id = wp.get("its_id")
+            ids = set()
+            if isinstance(its_id, str) and its_id.strip():
+                ids.add(its_id.strip())
+            # 필요하면 보조 workplan도 여기서 더 모을 수 있음
+            return list(ids)
+        except Exception:
+            return []
+
+    def _extract_all_workplan_ids_from_project_xml(self, proj_xml: str) -> list[str]:
+        """
+        프로젝트 XML에서 main_workplan 및 기타 워크플랜들의 its_id를 전부 수집.
+        (현재 스키마에선 main_workplan만 있어도 동작)
+        """
+        try:
+            doc = xmltodict.parse(proj_xml)
+        except Exception:
+            return []
+        proj = doc.get("dt_asset", {}).get("dt_elements", {})
+        if not isinstance(proj, dict) or (proj.get("@xsi:type") != "dt_project"):
+            return []
+
+        wp_ids: list[str] = []
+        main_wp = proj.get("main_workplan")
+        if isinstance(main_wp, dict):
+            mid = main_wp.get("its_id")
+            if isinstance(mid, str) and mid.strip():
+                wp_ids.append(mid.strip())
+
+        # (확장 시) 추가 워크플랜 컬렉션이 있다면 여기서 더 수집
+
+        # 중복 제거
+        return list(dict.fromkeys(wp_ids))
+
+    async def _collect_dt_files_referencing_project(
+        self,
+        *,
+        project_xml: str,
+        project_global_asset_id: str,
+        project_asset_id: str,
+        project_element_id: str,
+    ) -> list[dict]:
+        """
+        프로젝트/워크플랜을 참조하는 dt_file들을 전부 수집.
+        - repo.find_nc_files_by_ref()가 workplan_id를 요구하므로, 프로젝트 XML에서 WP ID를 전부 뽑아 반복 호출
+        - DT_GLOBAL_ASSET은 정규화/비정규화 둘 다 시도 (이력 데이터 대비)
+        """
+        out: list[dict] = []
+
+        # 워크플랜 ID 뽑기
+        wp_ids = self._extract_all_workplan_ids_from_project_xml(project_xml)
+        if not wp_ids:
+            return out
+
+        # 정규화/비정규화 모두 시도
+        norm_global = self.normalize_global_asset_id(project_global_asset_id)
+        raw_global = project_global_asset_id  # 사용자가 쿼리로 넘긴 원문
+
+        seen = set()
+        for wp_id in wp_ids:
+            for g in (norm_global, raw_global):
+                try:
+                    rows = await self.repo.find_nc_files_by_ref(
+                        global_asset_id=g,
+                        asset_id=project_asset_id,
+                        project_element_id=project_element_id,
+                        workplan_id=wp_id,  # ✅ 반드시 WP ID 지정
+                    )
+                except Exception:
+                    rows = []
+                for r in rows or []:
+                    key = (
+                        r.get("global_asset_id"),
+                        r.get("asset_id"),
+                        r.get("element_id"),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(
+                        {
+                            "type": "dt_file",
+                            "global_asset_id": r.get("global_asset_id"),
+                            "asset_id": r.get("asset_id"),
+                            "element_id": r.get("element_id"),
+                        }
+                    )
+        return out
+
+    def _extract_workplan_ids_from_project_xml(self, project_xml: str) -> list[str]:
+        """
+        프로젝트 XML에서 워크플랜 its_id 목록을 모두 수집.
+        - main_workplan/its_id
+        - (선택) its_workplans 안의 워크플랜들(있다면)도 수집
+        """
+        ids: list[str] = []
+        try:
+            doc = xmltodict.parse(project_xml)
+            proj = (doc.get("dt_asset") or {}).get("dt_elements") or {}
+            if not isinstance(proj, dict):
+                return ids
+
+            # main_workplan
+            mwp = proj.get("main_workplan")
+            if isinstance(mwp, dict):
+                wid = (mwp.get("its_id") or "").strip()
+                if wid:
+                    ids.append(wid)
+
+            # 기타 워크플랜 컨테이너(스키마에 따라 없을 수 있음)
+            wps = proj.get("its_workplans")
+            if isinstance(wps, dict):
+                # 단일 또는 리스트 normalize
+                wlist = wps.get("workplan") or wps.get("its_elements") or wps
+                wlist = wlist if isinstance(wlist, list) else [wlist]
+                for w in wlist:
+                    if isinstance(w, dict):
+                        wid = (w.get("its_id") or "").strip()
+                        if wid:
+                            ids.append(wid)
+        except Exception:
+            pass
+        return list(dict.fromkeys(ids))  # 중복 제거
