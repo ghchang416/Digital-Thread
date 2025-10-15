@@ -24,6 +24,7 @@ from src.schemas.asset import (
     AssetListResponse,
     AssetSearchQuery,
     AssetDocument,
+    AssetDocumentNoData,
 )
 from src.config import settings
 from src.services.file import FileService
@@ -113,10 +114,10 @@ class V3ProjectService:
             global_asset_id=global_asset_id, asset_id=asset_id, type="dt_project"
         )
         rows = await self.repo.search_assets(query)
-        if hasattr(AssetDocument, "model_validate"):  # pydantic v2
-            parsed = [AssetDocument.model_validate(r) for r in rows]
+        if hasattr(AssetDocumentNoData, "model_validate"):  # pydantic v2
+            parsed = [AssetDocumentNoData.model_validate(r) for r in rows]
         else:
-            parsed = [AssetDocument.parse_obj(r) for r in rows]
+            parsed = [AssetDocumentNoData.parse_obj(r) for r in rows]
         return AssetListResponse(assets=parsed)
 
     async def get_by_keys(
@@ -405,120 +406,130 @@ class V3ProjectService:
         return {"removed": True, "project_mongo_id": str(project_doc["_id"])}
 
     # ---------------- DP 업로드 ----------------
+    def _decode_body(self, resp: httpx.Response) -> str | dict:
+        # 응답 본문을 최대한 읽어 사람이 볼 수 있게 디코드
+        ct = (resp.headers.get("content-type") or "").lower()
+        try:
+            if "application/json" in ct or "+json" in ct:
+                return resp.json()
+        except Exception:
+            pass
+        try:
+            return resp.text  # httpx가 charset 추정해서 디코드해줌
+        except Exception:
+            return resp.content.decode("utf-8", "ignore")
+
+    async def _try_xml(
+        self, client: httpx.AsyncClient, content_type: str, xml_text: str
+    ) -> dict:
+        headers = {**self._dp_headers, "Content-Type": content_type}
+        resp = await client.post(
+            self._dp_endpoint_xml,
+            headers=headers,
+            # ✅ UTF-8로 명시 인코딩
+            content=xml_text.encode("utf-8"),
+        )
+        body = self._decode_body(resp)
+
+        # ❗서버 메시지를 로그에 남겨 원인 확인 가능하게
+        import logging
+
+        logging.info(
+            "[DP XML upload] try ct=%s -> %s, body-preview=%s",
+            content_type,
+            resp.status_code,
+            (body if isinstance(body, str) else str(body))[:800],  # 800자만 미리보기
+        )
+
+        return {
+            "ok": resp.status_code in (200, 201),
+            "status": resp.status_code,
+            "body": body,
+        }
 
     async def _dp_upload_xml(self, xml_text: str) -> dict:
         """
-        XML만 있는 자산 업로드. 서버 설정 차이를 대비해 다음 순서로 폴백 시도:
-        1) application/xml (raw body = XML 원문)   ← 스웨거 캡처와 정확히 일치
-        2) text/xml                                ← 어떤 배포에서는 text/xml만 허용
-        3) multipart/form-data (assetData 파트)    ← 이전 서버 스펙용
-        4) application/x-www-form-urlencoded       ← 폼으로만 받는 경우
-        5) text/plain
-        6) application/json (assetData 래핑)
+        XML-only 업로드: raw XML 본문 전송.
+        1) application/xml; charset=utf-8
+        2) text/xml; charset=utf-8 (폴백 한 번만)
+        응답 본문을 항상 캡처해 리턴.
         """
-
         async with httpx.AsyncClient(timeout=60) as client:
-            # 1) application/xml (raw body)
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers={**self._dp_headers, "Content-Type": "application/xml"},
-                content=xml_text,
-            )
-            if resp.status_code in (200, 201):
-                return {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "body": self._safe_body(resp),
-                }
+            # 1차: application/xml
+            r1 = await self._try_xml(client, "application/xml; charset=utf-8", xml_text)
+            if r1["ok"]:
+                return r1
 
-            # 2) text/xml (raw body)
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers={**self._dp_headers, "Content-Type": "text/xml"},
-                content=xml_text,
-            )
-            if resp.status_code in (200, 201):
-                return {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "body": self._safe_body(resp),
-                }
+            # 2차(폴백): text/xml
+            r2 = await self._try_xml(client, "text/xml; charset=utf-8", xml_text)
 
-            # 3) multipart/form-data (assetData 파트에 원문)
-            files = [("assetData", (None, xml_text, "application/xml"))]
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers=self._dp_headers,  # Authorization 만
-                files=files,
-            )
-            if resp.status_code in (200, 201):
-                return {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "body": self._safe_body(resp),
-                }
-
-            # 4) application/x-www-form-urlencoded
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers={
-                    **self._dp_headers,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                data={"assetData": xml_text},
-            )
-            if resp.status_code in (200, 201):
-                return {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "body": self._safe_body(resp),
-                }
-
-            # 5) text/plain
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers={**self._dp_headers, "Content-Type": "text/plain"},
-                content=xml_text,
-            )
-            if resp.status_code in (200, 201):
-                return {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "body": self._safe_body(resp),
-                }
-
-            # 6) application/json (마지막 폴백)
-            resp = await client.post(
-                self._dp_endpoint_xml,
-                headers={**self._dp_headers, "Content-Type": "application/json"},
-                json={"assetData": xml_text},
-            )
+            # 둘 다 실패면 더 자세한 진단을 위해 1차/2차 결과를 묶어서 반환
             return {
-                "ok": resp.status_code in (200, 201),
-                "status": resp.status_code,
-                "body": self._safe_body(resp),
+                "ok": False,
+                "status": r2["status"],
+                "body": {
+                    "attempts": [
+                        {"content_type": "application/xml; charset=utf-8", **r1},
+                        {"content_type": "text/xml; charset=utf-8", **r2},
+                    ]
+                },
             }
 
+    # async def _dp_upload_xml(self, xml_text: str) -> dict:
+    #     """
+    #     XML-only 업로드: raw XML 본문 + Content-Type: application/xml
+    #     (일부 배포 호환용으로 text/xml 1회 폴백만 유지)
+    #     """
+    #     headers = {**self._dp_headers, "Content-Type": "application/xml"}
+
+    #     async with httpx.AsyncClient(timeout=60) as client:
+    #         # 1) application/xml
+    #         resp = await client.post(
+    #             self._dp_endpoint_xml,
+    #             headers=headers,
+    #             content=xml_text,  # ✅ raw XML 본문
+    #         )
+    #         if resp.status_code in (200, 201):
+    #             return {
+    #                 "ok": True,
+    #                 "status": resp.status_code,
+    #                 "body": self._safe_body(resp),
+    #             }
+
+    #         # 2) (옵션) 일부 구환경 text/xml
+    #         resp = await client.post(
+    #             self._dp_endpoint_xml,
+    #             headers={**self._dp_headers, "Content-Type": "text/xml"},
+    #             content=xml_text,
+    #         )
+    #         return {
+    #             "ok": resp.status_code in (200, 201),
+    #             "status": resp.status_code,
+    #             "body": self._safe_body(resp),
+    #         }
+
     async def _dp_upload_xml_with_file(
-        self, xml_text: str, files: List[tuple[str, bytes]]
+        self, xml_text: str, files: list[tuple[str, bytes]]
     ) -> dict:
-        """
-        /openapi/v2/asset/xml-with-file : multipart/form-data
-        - files: 여러 개 파일 파트
-        - xmlData: XML 텍스트 (text/plain)
-        """
         multipart = []
         for fname, content in files:
             multipart.append(("files", (fname, content, "application/octet-stream")))
-        multipart.append(("xmlData", (None, xml_text, "application/xml")))
+        # XML은 파일 파트로, 타입을 application/xml로 명시
+        multipart.append(("xmlData", ("payload.xml", xml_text, "application/xml")))
+
         async with httpx.AsyncClient(timeout=60) as client:
+            # ⚠️ 여기서는 Content-Type을 수동 지정하지 말 것 (경계값 깨짐)
             resp = await client.post(
                 self._dp_endpoint_xml_with_file,
                 headers=self._dp_headers,
                 files=multipart,
             )
-        ok = resp.status_code in (200, 201)
-        return {"ok": ok, "status": resp.status_code, "body": self._safe_body(resp)}
+
+        return {
+            "ok": resp.status_code in (200, 201),
+            "status": resp.status_code,
+            "body": self._safe_body(resp),
+        }
 
     def _safe_body(self, resp: httpx.Response):
         ctype = resp.headers.get("content-type", "")

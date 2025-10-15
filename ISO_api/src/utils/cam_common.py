@@ -726,6 +726,26 @@ def normalize_dt_project_structure(xml_text: str, project_element_id: str) -> st
         # main_workplan 자식 순서: its_id → its_elements → ref_dt_machine_tool → 기타
         return _ordered(wp, ["its_id", "its_elements", "ref_dt_machine_tool"])
 
+    def _normalize_workpieces_container(wp: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        its_workpieces 내부의 기존 키 순서를 그대로 유지하되,
+        ref_dt_material만 맨 마지막으로 이동시킨다.
+        """
+        if not isinstance(wp, dict):
+            return wp
+
+        if "ref_dt_material" not in wp:
+            return wp  # ref_dt_material이 없으면 그대로 반환
+
+        val_ref = wp.pop("ref_dt_material")
+
+        # ⚙️ 기존 순서 유지 (파이썬 3.7+ dict 순서 보장)
+        ordered = OrderedDict(wp)
+
+        # ref_dt_material만 맨 뒤로 추가
+        ordered["ref_dt_material"] = val_ref
+        return ordered
+
     # --- 파싱 ---
     doc = xmltodict.parse(xml_text)
     dt_asset = doc.get("dt_asset")
@@ -749,10 +769,12 @@ def normalize_dt_project_structure(xml_text: str, project_element_id: str) -> st
         proj["main_workplan"] = _normalize_main_workplan(proj["main_workplan"])
 
     # its_workpieces 내부는 순서 제약이 상대적으로 느슨하지만, 기본 키 순서만 정리
-    if "its_workpieces" in proj and isinstance(proj["its_workpieces"], dict):
-        proj["its_workpieces"] = _ordered(
-            proj["its_workpieces"], ["its_id", "ref_dt_material"]
-        )
+    if "its_workpieces" in proj:
+        wps = proj["its_workpieces"]
+        if isinstance(wps, list):
+            proj["its_workpieces"] = [_normalize_workpieces_container(w) for w in wps]
+        elif isinstance(wps, dict):
+            proj["its_workpieces"] = _normalize_workpieces_container(wps)
 
     # dt_project 자식 전체 순서 정리
     proj_order = [

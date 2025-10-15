@@ -167,19 +167,54 @@ async def get_asset_list(
 
 @router.put("", summary="Asset 수정(XML 교체, 선택 파일 교체)")
 async def update_asset(
-    asset_mongo_id: str = Query(..., description="업데이트할 asset의 mongo_id"),
+    global_asset_id: str = Query(..., description="대상 asset의 global_asset_id"),
+    asset_id: str = Query(..., description="대상 asset의 asset_id"),
+    element_id: str = Query(..., description="대상 asset의 element_id"),
+    type: str = Query(
+        ...,
+        description="대상 asset의 type [dt_file / dt_material /dt_machine_tool / dt_cutting_tool_13399]",
+    ),
     xml: UploadFile = File(..., description="교체할 dt_asset XML"),
     upload_file: UploadFile | None = File(None, description="dt_file 바이너리(옵션)"),
     asset_service: AssetService = Depends(get_asset_service),
     file_service: FileService = Depends(get_file_service),
 ):
-    xml_string = (await xml.read()).decode("utf-8", errors="ignore")
+    """
+    - (1) 키 조합으로 asset을 찾고 mongo_id 추출
+    - (2) update_from_xml / update_from_xml_with_file_id 업데이트
+    - (3) 파일 업로드 시, xml의 <display_name>에 파일 이름과 업로드 하는 파일이름이 일치해야 함.
+    - dt_project는 해당 API로 수정 불가.
+    """
+    # 프로젝트 타입은 교체 불가
+    if type.strip().lower() == "dt_project":
+        raise HTTPException(
+            status_code=400,
+            detail="dt_project type cannot be updated via this API. Use the project API instead.",
+        )
+
+    # XML 읽기
+    try:
+        xml_string = (await xml.read()).decode("utf-8", errors="ignore")
+    except Exception:
+        raise HTTPException(status_code=400, detail="failed to read XML file")
+
+    # mongo_id 조회
+    doc = await asset_service.repo.get_asset_by_keys(
+        global_asset_id=global_asset_id,
+        asset_id=asset_id,
+        type=type,
+        element_id=element_id,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Asset not found for given keys")
+
+    mongo_id = str(doc["_id"])
 
     # 파일 없이 XML만 교체
     if upload_file is None:
         try:
             await asset_service.update_from_xml(
-                mongo_id=asset_mongo_id,
+                mongo_id=mongo_id,
                 xml=xml_string,
                 forbid_type_change=True,  # type 변경 금지
                 precheck_dup_conflict=True,  # 키 변경시 중복 선검사
@@ -192,11 +227,26 @@ async def update_asset(
                 raise HTTPException(status_code=409, detail="Duplicate asset keys")
             raise HTTPException(status_code=400, detail=str(ce))
 
+    # 5️⃣ 파일 교체 플로우 ----------------------------------------
+    else:
+        # ✅ 파일명 검증 (여기 한 줄만 추가)
+        try:
+            asset_service.ensure_uploaded_filename_matches_xml(
+                xml=xml_string,
+                element_id=element_id,
+                uploaded_filename=upload_file.filename,
+                case_sensitive=True,  # 필요시 False
+                compare_basename_only=True,  # 필요시 False
+            )
+        except CustomException as ce:
+            # 400으로 변환
+            raise HTTPException(status_code=400, detail=str(ce))
+
     # 파일 교체 플로우: 새 파일 업로드 → XML 패치+업데이트 → 성공 시 기존 파일 삭제 / 실패 시 새 파일 롤백
     new_file_id = await file_service.process_upload(file=upload_file)
     try:
         old_file_id = await asset_service.update_from_xml_with_file_id(
-            mongo_id=asset_mongo_id,
+            mongo_id=mongo_id,
             xml=xml_string,
             new_file_id=new_file_id,
             fill="value",  # 필요시 "path"/"both"

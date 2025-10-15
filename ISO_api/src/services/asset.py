@@ -1,4 +1,4 @@
-import re
+import re, os
 from typing import Optional, Dict, Any, List, Tuple
 import xmltodict
 
@@ -17,6 +17,7 @@ from src.schemas.asset import (
     AssetIdListResponse,
     GroupedAssetIdsResponse,
     GroupedAssetIdsItem,
+    AssetDocumentNoData,
 )
 from src.entities.asset import AssetRepository
 from src.services.file import FileService
@@ -566,11 +567,11 @@ class AssetService:
         rows = await self.repo.search_assets(query)
 
         # Pydantic v1/v2 호환
-        parsed: List[AssetDocument]
-        if hasattr(AssetDocument, "model_validate"):  # pydantic v2
-            parsed = [AssetDocument.model_validate(r) for r in rows]
+        parsed: List[AssetDocumentNoData]
+        if hasattr(AssetDocumentNoData, "model_validate"):  # pydantic v2
+            parsed = [AssetDocumentNoData.model_validate(r) for r in rows]
         else:  # pydantic v1
-            parsed = [AssetDocument.parse_obj(r) for r in rows]
+            parsed = [AssetDocumentNoData.parse_obj(r) for r in rows]
 
         return AssetListResponse(assets=parsed)
 
@@ -1065,3 +1066,43 @@ class AssetService:
             },
         )
         return await cursor.to_list(length=None)
+
+    def ensure_uploaded_filename_matches_xml(
+        self,
+        *,
+        xml: str,
+        element_id: str | None,
+        uploaded_filename: str,
+        case_sensitive: bool = True,
+        compare_basename_only: bool = True,
+    ) -> None:
+        """
+        XML(dt_file)의 <display_name>과 업로드 파일 이름이 일치하는지 검증.
+        - 일치하지 않으면 CustomException(INVALID_ATTRIBUTE) 발생
+        - case_sensitive=False 로 주면 대소문자 무시
+        - compare_basename_only=True 면 경로/확장자 포함 이름에서 basename 만 비교
+        """
+        display_name, _ = self._extract_display_and_content_type(xml, element_id)
+        if not display_name:
+            raise CustomException(
+                ExceptionEnum.INVALID_ATTRIBUTE,
+                "XML missing <display_name> for dt_file element",
+            )
+
+        left = (
+            os.path.basename(uploaded_filename)
+            if compare_basename_only
+            else uploaded_filename
+        )
+        right = (
+            os.path.basename(display_name) if compare_basename_only else display_name
+        )
+
+        if not case_sensitive:
+            left, right = left.lower(), right.lower()
+
+        if left != right:
+            raise CustomException(
+                ExceptionEnum.INVALID_ATTRIBUTE,
+                f"display_name mismatch: XML='{display_name}', uploaded='{uploaded_filename}'",
+            )

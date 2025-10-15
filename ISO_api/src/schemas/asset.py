@@ -38,6 +38,15 @@ class AssetDocument(BaseModel):
     element_id: str
     data: str
 
+
+class AssetDocumentNoData(BaseModel):
+    id: str = Field(alias="_id")
+    global_asset_id: str
+    asset_id: str
+    type: str
+    category: Optional[str] = None
+    element_id: str
+
     # Pydantic v2
     @field_validator("id", mode="before")
     @classmethod
@@ -58,7 +67,7 @@ class AssetSearchQuery(BaseModel):
 
 
 class AssetListResponse(BaseModel):
-    assets: List[AssetDocument]
+    assets: List[AssetDocumentNoData]
 
 
 class AttachRefResponse(BaseModel):
