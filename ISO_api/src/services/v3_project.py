@@ -16,6 +16,7 @@ from src.utils.v3_xml_parser import (
     find_workplan_in_project,
     find_workpiece_in_project,
     find_operation_in_workplan,
+    _as_list,
 )
 from src.utils.exceptions import CustomException, ExceptionEnum
 from src.utils.env import get_env_or_default
@@ -858,11 +859,40 @@ class V3ProjectService:
     ) -> bool:
         if not isinstance(file_node, dict):
             return False
-        ref = file_node.get("reference")
-        if not isinstance(ref, dict):
-            ref = {}
-            file_node["reference"] = ref
-        keys_list = self._as_list(ref.get("keys"))
+
+        refs = file_node.get("reference")
+        refs_list = (
+            refs
+            if isinstance(refs, list)
+            else ([refs] if isinstance(refs, dict) else [])
+        )
+
+        # 프로젝트 reference 선택(없으면 새로 하나 만든다)
+        def _is_project_ref(ref_dict: dict) -> bool:
+            keys = _as_list(ref_dict.get("keys"))
+            names = set()
+            for kv in keys:
+                if isinstance(kv, dict) and isinstance(kv.get("key"), str):
+                    names.add(kv["key"].strip().upper())
+            return "DT_GLOBAL_ASSET" in names and "DT_ASSET" in names
+
+        target_ref = None
+        for r in refs_list:
+            if isinstance(r, dict) and _is_project_ref(r):
+                target_ref = r
+                break
+
+        if target_ref is None:
+            target_ref = {}
+            # 기존이 없었다면 단일 → 리스트로 승격
+            if not refs_list:
+                file_node["reference"] = [target_ref]
+            elif isinstance(refs, dict):
+                file_node["reference"] = [refs, target_ref]
+            else:
+                refs_list.append(target_ref)
+
+        keys_list = _as_list(target_ref.get("keys"))
 
         def has_kv(k, v):
             for kv in keys_list:
@@ -885,7 +915,7 @@ class V3ProjectService:
                 keys_list.append({"key": k, "value": v})
                 changed = True
 
-        ref["keys"] = keys_list[0] if len(keys_list) == 1 else keys_list
+        target_ref["keys"] = keys_list[0] if len(keys_list) == 1 else keys_list
         return changed
 
     def _remove_project_reference_from_file(

@@ -23,7 +23,7 @@ from typing import (
 )
 from enum import Enum
 
-from src.entities.model_v30 import *
+from src.entities.model_v31 import *
 
 import logging
 
@@ -1588,32 +1588,59 @@ def project_exists_in_xml(
         return False
 
 
+def _pick_project_reference_node(
+    dt_element_node: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    """
+    dt_file 내 여러 <reference> 중 '프로젝트를 참조'하는 reference를 선택:
+    - keys에 DT_GLOBAL_ASSET, DT_ASSET 가 **모두** 있는 것을 우선 반환
+    - 없으면 None
+    """
+    if not isinstance(dt_element_node, dict):
+        return None
+    refs = dt_element_node.get("reference")
+    for ref in _as_list(refs):
+        if not isinstance(ref, dict):
+            continue
+        keys = ref.get("keys")
+        key_entries = _as_list(keys)
+        key_names = set()
+        for kv in key_entries:
+            if isinstance(kv, dict):
+                k = kv.get("key")
+                if isinstance(k, str):
+                    key_names.add(k.strip().upper())
+        if "DT_GLOBAL_ASSET" in key_names and "DT_ASSET" in key_names:
+            return ref
+    return None
+
+
 def extract_file_reference_tuple(
     dt_element_node: Dict[str, Any],
 ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
-    (DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN, WORKINGSTEP[, OPERATION?]) 추출
-    OPERATION은 옵션: 스키마에 없으면 None.
-    반환: (dt_global_url, dt_asset_url, proj_id, wp_id, ws_id)
+    (DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN, WORKINGSTEP) 추출.
+    - <reference>가 여러 개인 경우, 프로젝트 참조(reference)를 골라서 파싱
+    - keys가 dict/list 어떤 형태든 안전 처리
     """
     if not isinstance(dt_element_node, dict):
         return (None, None, None, None, None)
 
-    ref = _get_by_local(dt_element_node, "reference")
+    ref = _pick_project_reference_node(dt_element_node)
     if not ref:
+        # 프로젝트를 참조하는 reference가 없으면 None 반환
         return (None, None, None, None, None)
 
-    keys_list = ref.get("keys")
-    keys_list = keys_list if isinstance(keys_list, list) else [keys_list]
+    keys_list = _as_list(ref.get("keys"))
 
     proj = wp = ws = dt_global = dt_asset = None
     for kv in keys_list:
         if not isinstance(kv, dict):
             continue
-        k = _get_by_local(kv, "key")
-        v = _get_by_local(kv, "value")
+        k = kv.get("key")
+        v = kv.get("value")
         key_up = (k or "").strip().upper()
-        val = _first_str(v)
+        val = v.strip() if isinstance(v, str) else None
         if key_up == "DT_GLOBAL_ASSET":
             dt_global = val
         elif key_up == "DT_ASSET":
@@ -1625,7 +1652,7 @@ def extract_file_reference_tuple(
         elif key_up == "WORKINGSTEP":
             ws = val
 
-    # 상위 키가 없으면 하위 키는 무의미 → 무효화
+    # 상위 키 없으면 하위 무효화
     if not dt_global or not dt_asset:
         proj = wp = ws = None
 

@@ -141,7 +141,6 @@ class AssetService:
         created = 0
         failed = 0
 
-        # 0) 루트 분할 실패도 summary로 흡수
         try:
             parts = split_dt_asset_xml(xml)
         except Exception as e:
@@ -160,6 +159,7 @@ class AssetService:
             return {"results": [], "summary": {"total": 0, "created": 0, "failed": 0}}
 
         file_map = {f.filename: f for f in (upload_files or [])}
+        has_uploads = bool(file_map)  # 업로드 파일 동봉 여부
 
         for part_xml in parts:
             try:
@@ -170,7 +170,7 @@ class AssetService:
                     category = meta.get("category")
                     element_id = meta["element_id"]
 
-                    # global_asset_id 보정 (내부 헬퍼 활용)
+                    # global_asset_id 정규화 보정
                     if meta.get("global_asset_id"):
                         fixed_gid = self._normalize_global_asset_id(
                             meta["global_asset_id"]
@@ -192,7 +192,7 @@ class AssetService:
                     )
                     continue
 
-                # B) 스키마 검증 (요소 단위로 실패 집계)
+                # B) 스키마 검증
                 if validate_schema and not validate_xml_against_schema(part_xml):
                     failed += 1
                     results.append(
@@ -208,52 +208,63 @@ class AssetService:
 
                 patched_xml = part_xml
 
-                # C) 파일 요소 처리
+                # C) 파일 요소 처리 (CHANGED)
                 if el_type == "dt_file":
-                    # 1) 파일명 추출
+                    # 1) 요소 파싱 & display_name 추출
                     try:
                         d = xmltodict.parse(part_xml)
                         elem = (d.get("dt_asset") or d).get("dt_elements")
-                        display_name = get_file_display_name(elem)
                     except Exception:
                         elem = None
+
+                    # 1-1) reference가 여러 개인 경우, DT_PROJECT 키가 있는 reference 노드 하나를 우선 선택 (없으면 첫 번째)
+                    try:
+                        if (
+                            isinstance(elem, dict)
+                            and "reference" in elem
+                            and isinstance(elem["reference"], list)
+                        ):
+
+                            def _ref_has_key(ref_node, key_name: str) -> bool:
+                                ks = ref_node.get("keys")
+                                items = (
+                                    ks
+                                    if isinstance(ks, list)
+                                    else ([ks] if isinstance(ks, dict) else [])
+                                )
+                                for kv in items:
+                                    if (
+                                        isinstance(kv, dict)
+                                        and (kv.get("key") or "").strip().upper()
+                                        == key_name
+                                    ):
+                                        return True
+                                return False
+
+                            proj_refs = [
+                                r
+                                for r in elem["reference"]
+                                if _ref_has_key(r, "DT_PROJECT")
+                            ]
+                            picked = proj_refs[0] if proj_refs else elem["reference"][0]
+                            # 선택한 reference만 남기고 extract_file_reference_tuple 이 안전히 동작하도록 정규화
+                            elem = {**elem, "reference": picked}
+                    except Exception:
+                        # reference 구조가 이상해도 여기서 죽지 않게
+                        pass
+
+                    # 1-2) display_name
+                    try:
+                        display_name = get_file_display_name(elem)
+                    except Exception:
                         display_name = None
 
-                    if not display_name:
-                        failed += 1
-                        results.append(
-                            {
-                                "element_id": element_id,
-                                "type": el_type,
-                                "category": category,
-                                "status": "failed",
-                                "reason": "display_name-missing",
-                            }
-                        )
-                        continue
-
-                    fobj = file_map.get(display_name)
-                    if not fobj:
-                        failed += 1
-                        results.append(
-                            {
-                                "element_id": element_id,
-                                "type": el_type,
-                                "category": category,
-                                "status": "failed",
-                                "reason": f"file-not-found: '{display_name}'",
-                            }
-                        )
-                        continue
-
-                    # 2) dt_file 공통: <reference> 깊이만큼 존재 검증
+                    # 2) 참조 검증 (DT_GLOBAL_ASSET/DT_ASSET/DT_PROJECT 필수, WP/WS 선택)
                     try:
-                        # (DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN?, WORKINGSTEP?)
                         dt_global_url, dt_asset_url, proj_id, wp_id, ws_id = (
                             extract_file_reference_tuple(elem)
                         )
 
-                        # 상위키 + 프로젝트 필수
                         if not (dt_global_url and dt_asset_url and proj_id):
                             failed += 1
                             results.append(
@@ -331,7 +342,7 @@ class AssetService:
                                 )
                                 continue
 
-                        # 3) NC 전용: 1:1 중복 참조 검사 유지
+                        # NC 전용 중복 체크
                         if (category or "").upper() == "NC":
                             dup = await self.repo.exists_nc_reference_refset(
                                 dt_global_asset_url=dt_global_url,
@@ -354,7 +365,6 @@ class AssetService:
                                     }
                                 )
                                 continue
-
                     except Exception as e:
                         failed += 1
                         results.append(
@@ -368,33 +378,60 @@ class AssetService:
                         )
                         continue
 
-                    # 4) 파일 업로드 → OID 주입
+                    # 3) 파일 첨부/주입 판단 (CHANGED)
+                    # 이미 연결되어 있으면 스킵
+                    already_linked = False
                     try:
-                        file_oid = await file_service.process_upload(file=fobj)
-                        patched_xml = inject_file_id_into_xml(
-                            xml=part_xml,
-                            file_id=file_oid,
-                            target_element_id=element_id,
-                            fill="both",
-                            overwrite=True,
-                            default_content_type=fobj.content_type
-                            or "application/octet-stream",
-                            path_template="",
-                        )
-                    except Exception as e:
-                        failed += 1
-                        results.append(
-                            {
-                                "element_id": element_id,
-                                "type": el_type,
-                                "category": category,
-                                "status": "failed",
-                                "reason": f"file-upload-failed: {e}",
-                            }
-                        )
-                        continue
+                        if isinstance(elem, dict):
+                            val = elem.get("value")
+                            path = elem.get("path")
+                            if isinstance(val, str) and self._OID_RE.match(val):
+                                already_linked = True
+                            elif isinstance(path, str):
+                                m = self._GRIDFS_URI_RE.match(path)
+                                if m:
+                                    already_linked = True
+                    except Exception:
+                        pass
 
-                # D) DB 저장 (is_upload=False는 Repo에서 기본 세팅)
+                    if already_linked:
+                        patched_xml = part_xml  # 그대로 저장
+                    else:
+                        # 업로드 파일이 동봉된 경우에만 매칭/업로드 시도
+                        fobj = None
+                        if has_uploads and display_name:
+                            fobj = file_map.get(display_name)
+
+                        if fobj:
+                            try:
+                                file_oid = await file_service.process_upload(file=fobj)
+                                patched_xml = inject_file_id_into_xml(
+                                    xml=part_xml,
+                                    file_id=file_oid,
+                                    target_element_id=element_id,
+                                    fill="both",
+                                    overwrite=True,
+                                    default_content_type=fobj.content_type
+                                    or "application/octet-stream",
+                                    path_template="",
+                                )
+                            except Exception as e:
+                                failed += 1
+                                results.append(
+                                    {
+                                        "element_id": element_id,
+                                        "type": el_type,
+                                        "category": category,
+                                        "status": "failed",
+                                        "reason": f"file-upload-failed: {e}",
+                                    }
+                                )
+                                continue
+                        else:
+                            # 업로드 파일이 없거나(display_name 없음/미매칭 포함) → 베스트에포트: 그대로 저장
+                            patched_xml = part_xml
+
+                # D) DB 저장
                 try:
                     resp = await self.repo.insert_asset(
                         AssetCreateRequest(xml=patched_xml)
@@ -421,7 +458,6 @@ class AssetService:
                             "reason": f"db-insert-failed: {e}",
                         }
                     )
-                    # (선택) 파일 롤백은 베스트에포트로 스킵
                     continue
 
             except Exception as e:
