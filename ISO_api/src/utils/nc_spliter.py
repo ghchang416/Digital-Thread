@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 
 
 def detect_n_format(n_lines: List[str]):
@@ -242,6 +242,151 @@ def extract_tool_numbers_from_paths(file_paths: List[str]) -> List[int]:
             tool_numbers.append(None)
 
     return tool_numbers
+
+
+# --- 패턴 정의(확장 포인트) --- # NC 에서 T번호 추출하는 함수들
+PATTERNS = {
+    "TOOL": re.compile(r"\bT0*([0-9]+)\b", re.IGNORECASE),  # T1, T01, t12 ...
+    "CHANGE": re.compile(r"\bM0?6\b", re.IGNORECASE),  # M6, M06
+}
+
+
+def _strip_comments(line: str) -> str:
+    """NC 주석 제거: ( ... ), ; 이후, % 단독 라인."""
+    # ; 이후 제거
+    line = line.split(";", 1)[0]
+    # (...) 주석 제거(중첩 고려 X, 일반 케이스 대응)
+    line = re.sub(r"\([^)]*\)", "", line)
+    return line.strip()
+
+
+def _has_change_after(text: str, start_idx: int) -> bool:
+    """same-line에서 T 이후에 M6/M06이 나오는지 검사."""
+    m = PATTERNS["CHANGE"].search(text, pos=start_idx)
+    return m is not None
+
+
+def _has_tool_after(text: str, start_idx: int) -> Optional[str]:
+    """same-line에서 M6 이후에 T가 나오는지 검사. 있으면 tool str 반환."""
+    m = PATTERNS["TOOL"].search(text, pos=start_idx)
+    return m.group(1) if m else None
+
+
+def extract_tool_changes(
+    nc_text: str, lookahead_lines: int = 2
+) -> List[Dict[str, Any]]:
+    """
+    NC 텍스트에서 도구 교체 이벤트(Tn + M6/M06)를 추출.
+    - same-line: "T1 M6", "M06 T1" 모두 지원
+    - next-line: "T1" 다음 1~N줄 안에 "M6"가 나오면 교체로 간주
+    """
+    changes: List[Dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()  # (line_idx, tool)
+
+    raw_lines = nc_text.splitlines()
+    # 미리 전처리(주석 제거 & 대문자화는 비교용으로만)
+    lines = [_strip_comments(l) for l in raw_lines]
+
+    for i, line in enumerate(lines):
+        if not line or line.strip() == "%":
+            continue
+
+        upp = line.upper()
+
+        # 1) same-line: "Tn ... M6"
+        for tmatch in PATTERNS["TOOL"].finditer(upp):
+            tool_num = tmatch.group(1)  # '1'
+            tool_tag = f"T{int(tool_num)}"  # 'T1' (앞 0 제거)
+            t_end = tmatch.end()
+
+            if _has_change_after(upp, t_end):
+                key = (i, tool_tag)
+                if key not in seen:
+                    seen.add(key)
+                    changes.append(
+                        {
+                            "tool": tool_tag,
+                            "line": i + 1,
+                            "raw": raw_lines[i].rstrip(),
+                            "mode": "same-line T->M6",
+                        }
+                    )
+
+        # 2) same-line: "M6 ... Tn"
+        m6_match = PATTERNS["CHANGE"].search(upp)
+        if m6_match:
+            t_after = _has_tool_after(upp, m6_match.end())
+            if t_after:
+                tool_tag = f"T{int(t_after)}"
+                key = (i, tool_tag)
+                if key not in seen:
+                    seen.add(key)
+                    changes.append(
+                        {
+                            "tool": tool_tag,
+                            "line": i + 1,
+                            "raw": raw_lines[i].rstrip(),
+                            "mode": "same-line M6->T",
+                        }
+                    )
+
+        # 3) next-line: "Tn" 만 있고, 다음 N줄 안에 "M6" 등장
+        #    (해당 구간에 다른 T가 먼저 나오면 무시)
+        #    -> 가장 흔한 "Tn" 지정 후 다음 줄에서 M6 호출하는 패턴
+        only_t_matches = list(PATTERNS["TOOL"].finditer(upp))
+        if only_t_matches:
+            for tmatch in only_t_matches:
+                tool_num = tmatch.group(1)
+                tool_tag = f"T{int(tool_num)}"
+                # 같은 라인에서 이미 same-line로 잡혔다면 skip
+                if (i, tool_tag) in seen:
+                    continue
+
+                found = False
+                # 다음 줄들 스캔
+                for j in range(1, lookahead_lines + 1):
+                    if i + j >= len(lines):
+                        break
+                    nxt = lines[i + j]
+                    if not nxt:
+                        continue
+                    nxt_upp = nxt.upper()
+
+                    # 사이에 다른 T가 먼저 나오면 이 T 교체는 무효 처리
+                    earlier_t = PATTERNS["TOOL"].search(nxt_upp)
+                    m6_here = PATTERNS["CHANGE"].search(nxt_upp)
+
+                    if m6_here and (
+                        not earlier_t or m6_here.start() < earlier_t.start()
+                    ):
+                        key = (i + j, tool_tag)
+                        if key not in seen:
+                            seen.add(key)
+                            changes.append(
+                                {
+                                    "tool": tool_tag,
+                                    "line": i + j + 1,
+                                    "raw": raw_lines[i + j].rstrip(),
+                                    "mode": f"next-line(+{j})",
+                                }
+                            )
+                        found = True
+                        break
+
+                # lookahead 범위에서 M6를 못 찾으면 skip
+                if not found:
+                    pass
+
+    return changes
+
+
+def extract_tool_sequence(nc_text: str, lookahead_lines: int = 2) -> list[str]:
+    """
+    NC 텍스트에서 교체되는 T번호 순서만 추출.
+    예: ["T1", "T2", "T1", ...]
+    """
+    events = extract_tool_changes(nc_text, lookahead_lines=lookahead_lines)
+    return [e["tool"] for e in events]
 
 
 # 예시 사용

@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 from src.config import settings
 import requests
-from typing import Optional
+from typing import Optional, Any
+from fastapi import UploadFile
 
 
 def zip_folder(source_dir: str, zip_path: str):
@@ -128,3 +129,11 @@ def vm_file_s3_upload(file_path: str, parent_path: Optional[str] = None):
             return response.json()
     except Exception as e:
         return {"error": str(e)}
+
+
+async def read_json_file(f: UploadFile) -> Any:
+    raw = await f.read()
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return json.loads(raw)  # 혹시 이미 str이면

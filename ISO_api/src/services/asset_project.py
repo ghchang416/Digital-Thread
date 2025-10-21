@@ -81,8 +81,8 @@ class AssetProjectService:
 
         asset = DtAsset(
             asset_global_id=f"urn:uuid:{uuid.uuid4()}",
-            asset_kind=DtAssetKind.INSTANCE,
             id=f"ASSET_{project_id}",
+            asset_kind=DtAssetKind.INSTANCE,
             dt_elements=[dt_project_instance],
         )
 
