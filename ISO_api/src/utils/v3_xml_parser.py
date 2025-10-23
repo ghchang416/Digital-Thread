@@ -125,6 +125,20 @@ def _resolve_enum(enum_type: type[Enum], value) -> Enum:
         raise ValueError(f"잘못된 enum 값 '{value}' for {enum_type.__name__}")
 
 
+def _coerce_cutmode_or_default(v, default="climb") -> str:
+    """Cutmode 전용: 유효하지 않거나 모호한 값은 default로 강제."""
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    if s in ("climb", "conventional"):
+        return s
+    # 흔히 오는 애매한 값들 → default로 수렴
+    if s in ("any", "both", "either", "auto", "neutral", ""):
+        return default
+    # 알 수 없는 값도 default
+    return default
+
+
 def to_camel_case(snake_str):
     components = snake_str.split("_")
     return "".join(x.title() for x in components)
@@ -510,18 +524,29 @@ def create_feature_xml_temp(
                     fobj = current_type.__dataclass_fields__[part]
                     enum_type = _resolve_enum_type(fobj.type)
                     if enum_type:
-                        if value is None or (
-                            isinstance(value, str) and not value.strip()
-                        ):
-                            value = None
+                        # --- CutmodeType만 예외 처리 (기본값 강제) ---
+                        if enum_type.__name__ == "CutmodeType":
+                            raw = value
+                            value = _coerce_cutmode_or_default(value, default="climb")
+                            if str(raw).strip().lower() != value:
+                                try:
+                                    logger.warning(
+                                        "Cutmode fallback: %r -> %s", raw, value
+                                    )
+                                except Exception:
+                                    pass
                         else:
-                            enum_val = _resolve_enum(enum_type, value)
-                            # ★ enum 객체 그대로 쓰지 말고 .value 로 교체
-                            value = (
-                                enum_val.value
-                                if isinstance(enum_val, Enum)
-                                else enum_val
-                            )
+                            if value is None or (
+                                isinstance(value, str) and not value.strip()
+                            ):
+                                value = None
+                            else:
+                                enum_val = _resolve_enum(enum_type, value)
+                                value = (
+                                    enum_val.value
+                                    if isinstance(enum_val, Enum)
+                                    else enum_val
+                                )
 
                     # required 즉시 검사(엄격 모드에서만 실패)
                     if fobj.metadata.get("required", False) and strict_required:
@@ -1087,31 +1112,40 @@ def _as_list(v: Any) -> List[Any]:
     return v if isinstance(v, list) else [v]
 
 
+def _xsi_local(t: str | None) -> str:
+    return (t or "").split(":")[-1]
+
+
+def _iter_nested_workplans(wp_node: Dict[str, Any]):
+    """workplan 노드 내부에서 its_elements 중 @xsi:type='workplan'인 하위 워크플랜들을 재귀 순회."""
+    for el in _as_list(wp_node.get("its_elements")):
+        if not isinstance(el, dict):
+            continue
+        t = _xsi_local(el.get("@xsi:type") or el.get("xsi:type"))
+        if t == "workplan":
+            yield el
+            # 더 깊은 중첩까지 추적
+            yield from _iter_nested_workplans(el)
+
+
 def find_workplan_in_project(
     project_node: Dict[str, Any], workplan_id: str
 ) -> Dict[str, Any]:
     """
-    1) main_workplan 의 its_id를 먼저 확인
-    2) 없으면 its_elements 아래에서 workplan을 탐색 (중첩 구조 대비)
-    생성은 하지 않음. 못 찾으면 예외.
+    - main_workplan 의 its_id 먼저 비교
+    - main_workplan 내부 its_elements의 workplan 들을 재귀적으로 찾아 its_id 매칭
+    - (프로젝트 레벨 its_elements는 더 이상 보지 않음)
     """
     wp = project_node.get("main_workplan")
-    if isinstance(wp, dict) and wp.get("its_id") == workplan_id:
+    if not isinstance(wp, dict):
+        raise KeyError("main_workplan not found in project")
+
+    if (wp.get("its_id") or "").strip() == (workplan_id or "").strip():
         return wp
 
-    # its_elements 에 workplan 이 들어있는 케이스 지원
-    its_elements = _as_list(project_node.get("its_elements"))
-    for el in its_elements:
-        if not isinstance(el, dict):
-            continue
-        # ① 직접 workplan 노드
-        if el.get("its_id") == workplan_id and el.get("@xsi:type") == "workplan":
-            return el
-        # ② 래핑: {"workplan": {...}}
-        if "workplan" in el and isinstance(el["workplan"], dict):
-            w = el["workplan"]
-            if w.get("its_id") == workplan_id:
-                return w
+    for sub in _iter_nested_workplans(wp):
+        if (sub.get("its_id") or "").strip() == (workplan_id or "").strip():
+            return sub
 
     raise KeyError("workplan not found in project")
 
@@ -1144,46 +1178,43 @@ def find_operation_in_workplan(
     workplan_node: Dict[str, Any], workingstep_id: str
 ) -> Dict[str, Any]:
     """
-    workplan 아래 its_elements에서 workingstep을 its_id로 찾고,
-    그 안의 machining_workingstep/its_operation 노드를 반환.
-    (※ 반드시 존재해야 함. 없으면 예외)
+    workplan 아래 its_elements에서 (…workingstep) 을 its_id로 찾고,
+    그 안의 its_operation 노드를 반환.
+    - 무접두/접두어 허용
+    - machining_workingstep 직접 구조 및 래핑 구조 모두 지원
     """
-    elems = _as_list(workplan_node.get("its_elements"))
-    for el in elems:
+    for el in _as_list(workplan_node.get("its_elements")):
         if not isinstance(el, dict):
             continue
 
         # 후보 workingstep 노드 선택
-        ws = None
-        # ① 직접: @xsi:type="workingstep"
-        if el.get("@xsi:type") == "workingstep":
+        t = _xsi_local(el.get("@xsi:type") or el.get("xsi:type"))
+        if t.endswith("workingstep"):
             ws = el
-        # ② 래핑: {"workingstep": {...}}
         elif "workingstep" in el and isinstance(el["workingstep"], dict):
             ws = el["workingstep"]
-
-        if not isinstance(ws, dict):
+        else:
             continue
 
-        # workingstep its_id 매칭
-        ws_id = ws.get("its_id")
-        if ws_id != workingstep_id:
-            # 혹시 일부 데이터에서 its_id가 machining_workingstep 안에 있을 수도 있어 보호 코드
-            alt_id = (
-                ws.get("machining_workingstep", {}).get("its_id")
-                if isinstance(ws.get("machining_workingstep"), dict)
-                else None
-            )
-            if alt_id != workingstep_id:
-                continue
+        # its_id 비교 (보호적으로 내부 래핑도 확인)
+        ws_id = (
+            ws.get("its_id")
+            or (ws.get("machining_workingstep", {}) or {}).get("its_id")
+            or ""
+        ).strip()
+        if ws_id != (workingstep_id or "").strip():
+            continue
 
-        # its_operation 찾기
-        mws = ws.get("machining_workingstep")
-        if not isinstance(mws, dict):
-            break  # 이 WS는 가공 WS가 아님
-        op = mws.get("its_operation")
+        # its_operation 찾기(직접/내부 래핑 모두)
+        op = ws.get("its_operation")
         if isinstance(op, dict):
             return op
+
+        inner = ws.get("machining_workingstep")
+        if isinstance(inner, dict):
+            op = inner.get("its_operation")
+            if isinstance(op, dict):
+                return op
 
     raise KeyError("workingstep not found in workplan")
 
@@ -1696,23 +1727,30 @@ def workingstep_exists_in_project_xml(
         )
         dt_proj = pick_dt_project(doc, project_element_id)
         wp = find_workplan_in_project(dt_proj, workplan_id)
-        # workplan 아래 its_elements에서 workingstep its_id만 확인
-        elems = wp.get("its_elements")
-        elems = elems if isinstance(elems, list) else [elems]
-        for el in elems:
+
+        for el in _as_list(wp.get("its_elements")):
             if not isinstance(el, dict):
                 continue
-            ws = el.get("workingstep") if "workingstep" in el else el
-            if isinstance(ws, dict) and (
-                ws.get("@xsi:type") in ("workingstep", "machining_workingstep")
-                or "machining_workingstep" in ws
-            ):
-                # its_id 또는 래핑 내부 its_id 보호
-                if ws.get("its_id") == workingstep_id:
-                    return True
-                inner = ws.get("machining_workingstep")
-                if isinstance(inner, dict) and inner.get("its_id") == workingstep_id:
-                    return True
+
+            # 1) 타입 기반 매칭 (무접두/접두어 모두 허용)
+            t = _xsi_local(el.get("@xsi:type") or el.get("xsi:type"))
+            if t.endswith("workingstep"):
+                ws = el
+            # 2) 래핑 구조 {"workingstep": {...}}
+            elif "workingstep" in el and isinstance(el["workingstep"], dict):
+                ws = el["workingstep"]
+            else:
+                continue
+
+            # its_id 비교 (보호적으로 내부 래핑도 확인)
+            ws_id = (
+                ws.get("its_id")
+                or (ws.get("machining_workingstep", {}) or {}).get("its_id")
+                or ""
+            ).strip()
+            if ws_id == (workingstep_id or "").strip():
+                return True
+
         return False
     except Exception:
         return False
@@ -1816,6 +1854,36 @@ def extract_dtfile_oid(
 
 
 ## -- 새로 추가된 Cam json 파싱 관련 유틸 -- ##
+def _move_keys_to_tail(d: Dict[str, Any], keys: Iterable[str]) -> None:
+    """지정한 키들을 dict의 끝으로 이동(pop → 재할당)."""
+    for k in keys:
+        if isinstance(d, dict) and k in d:
+            d[k] = d.pop(k)
+
+
+def _push_ref_tags_to_end_in_workplan(wp: Dict[str, Any]) -> None:
+    """
+    workplan 딕셔너리에서 ref_* 키들을 항상 맨 뒤로 이동.
+    중첩된 하위 workplan에도 재귀 적용.
+    """
+    if not isinstance(wp, dict):
+        return
+
+    # 현재 워크플랜에서 ref_* 키를 맨 뒤로
+    ref_keys = [
+        k for k in list(wp.keys()) if isinstance(k, str) and k.startswith("ref_")
+    ]
+    _move_keys_to_tail(wp, ref_keys)
+
+    # 하위 workplan들도 정리
+    for el in _as_list(wp.get("its_elements")):
+        if not isinstance(el, dict):
+            continue
+        t = _xsi_local(el.get("@xsi:type") or el.get("xsi:type"))
+        if t == "workplan":
+            _push_ref_tags_to_end_in_workplan(el)
+
+
 def append_ws_into_project_xml(
     *,
     project_xml_text: str,
@@ -1849,6 +1917,9 @@ def append_ws_into_project_xml(
         cur.append(ws_node_dict)
     else:
         wp["its_elements"] = [cur, ws_node_dict]
+
+    # ref_*를 항상 맨 뒤로 재정렬
+    _push_ref_tags_to_end_in_workplan(wp)
 
     ensure_dtasset_namespaces(dt_asset)  # 안전 보정
     return xmltodict.unparse({"dt_asset": dt_asset}, pretty=True, attr_prefix="@")
@@ -1922,19 +1993,24 @@ def count_workingsteps_in_workplan_xml(
     dt_proj = pick_dt_project(doc, project_element_id)
     wp = find_workplan_in_project(dt_proj, workplan_id)
 
-    elems = wp.get("its_elements")
-    if elems is None:
-        return 0
-    if not isinstance(elems, list):
-        elems = [elems]
-
     cnt = 0
-    for el in elems:
-        if not isinstance(el, Dict):
+    for el in _as_list(wp.get("its_elements")):
+        if not isinstance(el, dict):  # ⚠️ typing.Dict 말고 내장 dict 사용
             continue
-        if el.get("@xsi:type") == "workingstep":
+
+        # 무접두/접두어 안전한 타입 판별
+        t = _xsi_local(el.get("@xsi:type") or el.get("xsi:type"))
+
+        # 1) @xsi:type 이 '...workingstep'로 끝나면 카운트 (예: workingstep, machining_workingstep)
+        if t and t.endswith("workingstep"):
             cnt += 1
             continue
-        if isinstance(el.get("workingstep"), Dict):
+
+        # 2) 래핑 구조: {"workingstep": {...}} 혹은 {"machining_workingstep": {...}}
+        if isinstance(el.get("workingstep"), dict) or isinstance(
+            el.get("machining_workingstep"), dict
+        ):
             cnt += 1
+            continue
+
     return cnt

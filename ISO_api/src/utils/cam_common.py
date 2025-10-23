@@ -566,9 +566,9 @@ def ensure_strategy_with_pathmode(
     # 순서 재정렬: (@xsi:type) → its_milling_tolerances → pathmode → cutmode → stepover → 기타
     desired_order = [
         "@xsi:type",
-        "its_milling_tolerances",
         "pathmode",
         "cutmode",
+        "its_milling_tolerances",
         "stepover",
     ]
     ordered = {}
