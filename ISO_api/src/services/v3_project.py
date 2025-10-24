@@ -476,6 +476,39 @@ class V3ProjectService:
                 },
             }
 
+    # async def _dp_upload_xml(self, xml_text: str) -> dict:
+    #     """
+    #     XML-only 업로드: raw XML 본문 + Content-Type: application/xml
+    #     (일부 배포 호환용으로 text/xml 1회 폴백만 유지)
+    #     """
+    #     headers = {**self._dp_headers, "Content-Type": "application/xml"}
+
+    #     async with httpx.AsyncClient(timeout=60) as client:
+    #         # 1) application/xml
+    #         resp = await client.post(
+    #             self._dp_endpoint_xml,
+    #             headers=headers,
+    #             content=xml_text,  # ✅ raw XML 본문
+    #         )
+    #         if resp.status_code in (200, 201):
+    #             return {
+    #                 "ok": True,
+    #                 "status": resp.status_code,
+    #                 "body": self._safe_body(resp),
+    #             }
+
+    #         # 2) (옵션) 일부 구환경 text/xml
+    #         resp = await client.post(
+    #             self._dp_endpoint_xml,
+    #             headers={**self._dp_headers, "Content-Type": "text/xml"},
+    #             content=xml_text,
+    #         )
+    #         return {
+    #             "ok": resp.status_code in (200, 201),
+    #             "status": resp.status_code,
+    #             "body": self._safe_body(resp),
+    #         }
+
     async def _dp_upload_xml_with_file(
         self, xml_text: str, files: list[tuple[str, bytes]]
     ) -> dict:
@@ -507,15 +540,6 @@ class V3ProjectService:
             except Exception:
                 return resp.text
         return resp.text
-
-    def _extract_all_workplan_ids_from_parsed_project(self, proj: dict) -> list[str]:
-        ids: list[str] = []
-        for wp in self._iter_workplans_in_project(proj):
-            wid = (wp.get("its_id") or "").strip()
-            if wid:
-                ids.append(wid)
-        # 중복 제거 및 원래 순서 보존
-        return list(dict.fromkeys(ids))
 
     async def upload_project_and_related(
         self,
@@ -720,73 +744,49 @@ class V3ProjectService:
 
     def _collect_refs_in_workpieces(self, proj: dict) -> List[Dict[str, str]]:
         out: List[Dict[str, str]] = []
-
-        # its_workpieces가 단수(dict)나 복수(list) 모두 가능
-        for it in self._as_list(proj.get("its_workpieces")):
-            if not isinstance(it, dict):
-                continue
-
-            # 래퍼 형태 지원: <its_workpieces><workpiece>...</workpiece></its_workpieces>
-            node = it.get("workpiece") if "workpiece" in it else it
-            if not isinstance(node, dict):
-                continue
-
-            # ref_dt_material은 현재 스펙상 한 개지만, 미래 호환을 위해 list도 허용
-            refs = self._as_list(node.get("ref_dt_material"))
-            for ref in refs:
-                if not isinstance(ref, dict):
-                    continue
-                uri = self._extract_full_uri_from_ref(ref)
-                if not uri:
-                    continue
-                out.append(self._split_full_uri_to_keys("dt_material", uri))
-
-        # (선택) 중복 제거: 동일한 material을 여러 워크피스가 참조해도 1개만 남김
-        dedup, seen = [], set()
-        for r in out:
-            key = (r["type"], r["global_asset_id"], r["asset_id"], r["element_id"])
-            if key in seen:
-                continue
-            seen.add(key)
-            dedup.append(r)
-        return dedup
+        wps = proj.get("its_workpieces")
+        if not isinstance(wps, dict):
+            return out
+        ref = wps.get("ref_dt_material")
+        if not ref:
+            return out
+        uri = self._extract_full_uri_from_ref(ref)
+        if uri:
+            out.append(self._split_full_uri_to_keys("dt_material", uri))
+        return out
 
     def _collect_ref_in_workplan_machine_tool(self, proj: dict) -> List[Dict[str, str]]:
-        out: list[dict] = []
-        for w in self._iter_workplans_in_project(proj):
-            ref = w.get("ref_dt_machine_tool")
+        out: List[Dict[str, str]] = []
+        wp = proj.get("main_workplan")
+        if not isinstance(wp, dict):
+            return out
+        ref = wp.get("ref_dt_machine_tool")
+        if not ref:
+            return out
+        uri = self._extract_full_uri_from_ref(ref)
+        if uri:
+            out.append(self._split_full_uri_to_keys("dt_machine_tool", uri))
+        return out
+
+    def _collect_refs_in_workingsteps_tools(self, proj: dict) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        wp = proj.get("main_workplan")
+        elems = wp.get("its_elements") if isinstance(wp, dict) else None
+        elems = (
+            elems
+            if isinstance(elems, list)
+            else ([elems] if isinstance(elems, dict) else [])
+        )
+        for ws in elems:
+            op = ws.get("its_operation") if isinstance(ws, dict) else None
+            if not isinstance(op, dict):
+                continue
+            ref = op.get("ref_dt_cutting_tool")
             if not ref:
                 continue
             uri = self._extract_full_uri_from_ref(ref)
             if uri:
-                out.append(self._split_full_uri_to_keys("dt_machine_tool", uri))
-        return out
-
-    def _collect_refs_in_workingsteps_tools(self, proj: dict) -> list[dict]:
-        out: list[dict] = []
-        for w in self._iter_workplans_in_project(proj):
-            elems = self._as_list(w.get("its_elements"))
-            for ws in elems:
-                if not isinstance(ws, dict):
-                    continue
-                # workingstep 판별: xsi:type 접미사 또는 its_operation 존재 여부로 휴리스틱
-                t = (ws.get("@xsi:type") or ws.get("xsi:type") or "").split(":")[-1]
-                if not (
-                    t.endswith("workingstep")
-                    or isinstance(ws.get("its_operation"), dict)
-                ):
-                    continue
-                op = ws.get("its_operation")
-                if not isinstance(op, dict):
-                    continue
-                ref = op.get("ref_dt_cutting_tool")
-                if not ref:
-                    continue
-                uri = self._extract_full_uri_from_ref(ref)
-                if uri:
-                    out.append(
-                        self._split_full_uri_to_keys("dt_cutting_tool_13399", uri)
-                    )
+                out.append(self._split_full_uri_to_keys("dt_cutting_tool_13399", uri))
         return out
 
     def _extract_full_uri_from_ref(self, ref_node: dict) -> Optional[str]:
@@ -1092,16 +1092,28 @@ class V3ProjectService:
 
     def _extract_all_workplan_ids_from_project_xml(self, proj_xml: str) -> list[str]:
         """
-        프로젝트 XML에서 모든 워크플랜(메인 + 중첩)의 its_id를 전부 수집.
+        프로젝트 XML에서 main_workplan 및 기타 워크플랜들의 its_id를 전부 수집.
+        (현재 스키마에선 main_workplan만 있어도 동작)
         """
         try:
             doc = xmltodict.parse(proj_xml)
-            proj = (doc.get("dt_asset") or {}).get("dt_elements") or {}
-            if not isinstance(proj, dict) or (proj.get("@xsi:type") != "dt_project"):
-                return []
-            return self._extract_all_workplan_ids_from_parsed_project(proj)
         except Exception:
             return []
+        proj = doc.get("dt_asset", {}).get("dt_elements", {})
+        if not isinstance(proj, dict) or (proj.get("@xsi:type") != "dt_project"):
+            return []
+
+        wp_ids: list[str] = []
+        main_wp = proj.get("main_workplan")
+        if isinstance(main_wp, dict):
+            mid = main_wp.get("its_id")
+            if isinstance(mid, str) and mid.strip():
+                wp_ids.append(mid.strip())
+
+        # (확장 시) 추가 워크플랜 컬렉션이 있다면 여기서 더 수집
+
+        # 중복 제거
+        return list(dict.fromkeys(wp_ids))
 
     async def _collect_dt_files_referencing_project(
         self,
@@ -1160,39 +1172,35 @@ class V3ProjectService:
 
     def _extract_workplan_ids_from_project_xml(self, project_xml: str) -> list[str]:
         """
-        프로젝트 XML에서 모든 워크플랜(메인 + 중첩)의 its_id를 전부 수집.
+        프로젝트 XML에서 워크플랜 its_id 목록을 모두 수집.
+        - main_workplan/its_id
+        - (선택) its_workplans 안의 워크플랜들(있다면)도 수집
         """
+        ids: list[str] = []
         try:
             doc = xmltodict.parse(project_xml)
             proj = (doc.get("dt_asset") or {}).get("dt_elements") or {}
-            if not isinstance(proj, dict) or (proj.get("@xsi:type") != "dt_project"):
-                return []
-            return self._extract_all_workplan_ids_from_parsed_project(proj)
+            if not isinstance(proj, dict):
+                return ids
+
+            # main_workplan
+            mwp = proj.get("main_workplan")
+            if isinstance(mwp, dict):
+                wid = (mwp.get("its_id") or "").strip()
+                if wid:
+                    ids.append(wid)
+
+            # 기타 워크플랜 컨테이너(스키마에 따라 없을 수 있음)
+            wps = proj.get("its_workplans")
+            if isinstance(wps, dict):
+                # 단일 또는 리스트 normalize
+                wlist = wps.get("workplan") or wps.get("its_elements") or wps
+                wlist = wlist if isinstance(wlist, list) else [wlist]
+                for w in wlist:
+                    if isinstance(w, dict):
+                        wid = (w.get("its_id") or "").strip()
+                        if wid:
+                            ids.append(wid)
         except Exception:
-            return []
-
-    def _iter_workplans_in_project(self, proj: dict):
-        """
-        프로젝트 노드(proj)에서 모든 워크플랜 노드를 순회한다.
-        - main_workplan
-        - main_workplan 내부 its_elements 중 xsi:type='workplan' (재귀 탐색)
-        """
-        # 1) main_workplan
-        wp = proj.get("main_workplan")
-        if isinstance(wp, dict):
-            yield wp
-
-            # 2) main_workplan 내부 중첩 워크플랜 재귀 탐색
-            def _walk_nested(w):
-                elems = self._as_list(w.get("its_elements"))
-                for e in elems:
-                    if not isinstance(e, dict):
-                        continue
-                    # xmltodict는 속성을 '@xsi:type'으로 담기도 함
-                    t = (e.get("@xsi:type") or e.get("xsi:type") or "").split(":")[-1]
-                    if t == "workplan":
-                        yield e
-                        # 더 깊은 중첩도 따라감
-                        yield from _walk_nested(e)
-
-            yield from _walk_nested(wp)
+            pass
+        return list(dict.fromkeys(ids))  # 중복 제거
