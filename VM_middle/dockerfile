@@ -1,0 +1,24 @@
+FROM continuumio/miniconda3:latest
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Seoul
+
+WORKDIR /app
+
+# conda env
+RUN conda create -y -n myenv python=3.10 && \
+    conda install -y -n myenv pip && \
+    conda clean -afy
+
+# requirements 먼저
+COPY requirements.txt /app/requirements.txt
+RUN conda run -n myenv python -m pip install --upgrade pip && \
+    conda run -n myenv pip install --no-cache-dir -r /app/requirements.txt
+
+# 앱 소스
+COPY . /app
+
+EXPOSE 8000
+
+CMD ["conda","run","--no-capture-output","-n","myenv","uvicorn","src.main:app","--host","0.0.0.0","--port","8000","--reload"]

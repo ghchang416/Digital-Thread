@@ -11,16 +11,21 @@ from src.utils.exceptions import CustomException, ExceptionEnum
 from src.schemas.asset import (
     AssetCreateRequest,
     AssetCreateResponse,
-    AssetDocument,
     AssetSearchQuery,
 )
 from src.utils.v3_xml_parser import extract_dtasset_meta, project_workplan_exists_in_xml
 
-import logging
-
 
 def _esc(s: str) -> str:
     return re.escape(s)
+
+
+def _stringify_object_id(doc: dict | None) -> dict | None:
+    if not doc:
+        return doc
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
 
 
 # Asset 정보를 MongoDB에 저장, 조회, 수정, 삭제 등 프로젝트 관련 DB 작업을 담당하는 클래스입니다.
@@ -160,7 +165,7 @@ class AssetRepository:
         type: str,
         element_id: str,
     ) -> Optional[dict]:
-        return await self.collection.find_one(
+        doc = await self.collection.find_one(
             {
                 "global_asset_id": global_asset_id,
                 "asset_id": asset_id,
@@ -168,6 +173,7 @@ class AssetRepository:
                 "element_id": element_id,
             }
         )
+        return _stringify_object_id(doc)
 
     async def search_assets(self, query: AssetSearchQuery) -> List[dict]:
         """

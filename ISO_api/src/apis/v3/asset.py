@@ -20,12 +20,14 @@ from src.services import (
 )
 from src.schemas.asset import (
     AssetCreateResponse,
+    AssetDocument,
     AssetListResponse,
     GlobalAssetListResponse,
     AssetIdListResponse,
     GroupedAssetIdsResponse,
 )
 from src.utils.exceptions import CustomException, ExceptionEnum
+from src.utils.v3_xml_parser import infer_type_and_category
 import requests
 from src.config import settings
 
@@ -412,7 +414,54 @@ async def list_global_assets(
 
 
 @router.get(
-    "/global-assets/{global_asset_id}/asset-ids",
+    "/{element_id}",
+    response_model=AssetDocument,
+    summary="에셋 단건 조회 (global_asset_id + asset_id + type + element_id)",
+)
+async def get_asset_by_keys(
+    element_id: str = Path(..., description="에셋 element_id"),
+    global_asset_id: str = Query(..., description="글로벌 에셋 ID(정규/비정규 허용)"),
+    asset_id: str = Query(..., description="에셋 ID"),
+    type: str = Query(
+        ..., description="에셋 타입 또는 별칭(nc/tdms/vm/tool/machine 등)"
+    ),
+    service: AssetService = Depends(get_asset_service),
+):
+    # 1) type 별칭 정규화 (별칭 → 정식 타입)
+    norm_type, _ = infer_type_and_category(type)
+    if not norm_type:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_type", "message": f"unknown type alias: {type}"},
+        )
+
+    # 2) 먼저 사용자가 준 global_asset_id로 조회
+    doc = await service.get_by_keys(
+        global_asset_id=global_asset_id,
+        asset_id=asset_id,
+        type=norm_type,
+        element_id=element_id,
+    )
+
+    # 3) 실패 시, 정규화 URL로 한 번 더 시도(정규/비정규 혼용 대비)
+    if not doc:
+        gid_norm = service._norm_global_url(global_asset_id)  # 내부 헬퍼 재사용
+        if gid_norm != global_asset_id:
+            doc = await service.get_by_keys(
+                global_asset_id=gid_norm,
+                asset_id=asset_id,
+                type=norm_type,
+                element_id=element_id,
+            )
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="asset not found by keys")
+
+    return doc
+
+
+@router.get(
+    "/global-assets/{global_asset_id:path}/asset-ids",
     response_model=AssetIdListResponse,
     summary="특정 글로벌의 asset_id 목록",
 )

@@ -624,6 +624,35 @@ class AssetService:
             element_id=element_id,
         )
 
+    async def get_by_keys_any(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        type: str,
+        element_id: str,
+    ) -> Optional[dict]:
+        # type 별칭(normalize) → (정식 type, 암시적 category)
+        resolved_type, inferred_category = infer_type_and_category(type)
+
+        # global_asset_id 정규화/원문 둘 다 시도
+        norm_gid = self._normalize_global_asset_id(global_asset_id)
+        for gid in (norm_gid, global_asset_id):
+            doc = await self.repo.get_asset_by_keys(
+                global_asset_id=gid,
+                asset_id=asset_id,
+                type=resolved_type or type,
+                element_id=element_id,
+            )
+            if not doc:
+                continue
+            # 별칭이 category를 내포했다면(예: nc → "NC"), 실제 문서와 불일치 시 무시
+            if inferred_category is not None:
+                if (doc.get("category") or "").lower() != inferred_category.lower():
+                    continue
+            return doc
+        return None
+
     async def search(self, query: AssetSearchQuery) -> List[dict]:
         return await self.repo.search_assets(query)
 

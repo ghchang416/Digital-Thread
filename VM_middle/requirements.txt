@@ -1,0 +1,36 @@
+# Web API
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.29,<0.33
+
+# HTTP 클라이언트 (VM 서버 API, presigned URL 등)
+httpx>=0.27,<0.28
+
+# 설정/환경변수
+pydantic>=2.6,<3
+pydantic-settings>=2.2,<3
+python-dotenv>=1.0,<2
+
+# 업로드(form-data)
+python-multipart>=0.0.9
+
+# MongoDB (비동기)
+motor>=3.5,<4          # (pymongo 포함)
+dnspython>=2.6,<3       # mongodb+srv URI 지원
+
+# XML 처리 (dt_file 생성/파싱)
+lxml>=5.2,<6
+xmltodict>=0.13,<0.14
+defusedxml>=0.7,<0.8
+
+# 파일 IO/스케줄/재시도
+aiofiles>=23.2,<24
+APScheduler>=3.10,<3.11
+tenacity>=8.2,<9
+
+# 시간대/유틸
+python-dateutil>=2.9,<3
+tzlocal>=5.2,<6
+
+# 성능/로그(선택이지만 권장)
+orjson>=3.10,<4         # FastAPI JSON 직렬화 가속
+loguru>=0.7,<1          # 가독성 좋은 로깅

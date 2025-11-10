@@ -659,6 +659,86 @@ class V3ProjectService:
 
         return results
 
+    async def upload_single_asset(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        type: str,
+        element_id: str,
+        file_service: FileService,
+    ) -> dict:
+        # 1) 자산 조회
+        doc = await self.repo.get_asset_by_keys(
+            global_asset_id=global_asset_id,
+            asset_id=asset_id,
+            type=type,
+            element_id=element_id,
+        )
+        if not doc:
+            return {
+                "ok": False,
+                "status": 404,
+                "error": "asset_not_found",
+                "meta": {
+                    "type": type,
+                    "global_asset_id": global_asset_id,
+                    "asset_id": asset_id,
+                    "element_id": element_id,
+                },
+            }
+
+        xml_text: str = doc.get("data", "")
+
+        # 2) 타입별 업로드 분기
+        if (type or "").strip() == "dt_file":
+            try:
+                node = self._pick_dt_file_node(xmltodict.parse(xml_text), element_id)
+                file_oid = self._extract_file_oid_from_dt_file_node(node)
+                display_name = (
+                    node.get("display_name") or node.get("element_id") or "file.bin"
+                )
+
+                if file_oid:
+                    bio = await file_service.repository.get_file_byteio(file_oid)
+                    bin_bytes = bio.getvalue()
+                    up = await self._dp_upload_xml_with_file(
+                        xml_text, [(display_name, bin_bytes)]
+                    )
+                else:
+                    up = await self._dp_upload_xml(xml_text)
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "status": 500,
+                    "error": f"upload_exception: {e}",
+                    "meta": {
+                        "type": type,
+                        "global_asset_id": global_asset_id,
+                        "asset_id": asset_id,
+                        "element_id": element_id,
+                    },
+                }
+        else:
+            up = await self._dp_upload_xml(xml_text)
+
+        # 3) 성공 시 업로드 플래그
+        if up.get("ok"):
+            await self.repo.set_is_upload_true_by_mongo_id(str(doc["_id"]))
+
+        # 4) 표준 응답
+        return {
+            "ok": up.get("ok", False),
+            "status": up.get("status"),
+            "body": up.get("body"),
+            "meta": {
+                "type": type,
+                "global_asset_id": doc.get("global_asset_id"),
+                "asset_id": doc.get("asset_id"),
+                "element_id": element_id,
+            },
+        }
+
     # ---------------- 수집/파싱 유틸 ----------------
 
     async def _collect_related_assets_by_project_xml(

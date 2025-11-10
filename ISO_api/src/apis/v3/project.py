@@ -139,7 +139,7 @@ async def attach_project_ref(
     # 타입/카테고리 힌트
     ref_type: str = Query(
         ...,
-        description="참조 대상 type (예: dt_machine_tool / dt_cutting_tool_13399 / dt_file)",
+        description="참조 대상 type (예: dt_machine_tool / dt_material / dt_cutting_tool_13399 / dt_file)",
     ),
     ref_category: str | None = Query(
         None, description="참조 대상 category (파일계열: NC/VM/TDMS 등)"
@@ -617,6 +617,27 @@ async def upload_project_and_refs(
         include_ref_types=None,  # 항상 전체 업로드면 None 유지,
     )
     return result
+
+
+@router.post("/upload-platform-one")
+async def upload_one_asset(
+    global_asset_id: str = Query(...),
+    asset_id: str = Query(...),
+    element_id: str = Query(...),
+    type: str = Query(
+        ...,
+        description="dt_project | dt_file | dt_material | dt_machine_tool | dt_cutting_tool_13399",
+    ),
+    file_service: FileService = Depends(get_file_service),
+    project_service: V3ProjectService = Depends(get_v3_project_service),
+):
+    return await project_service.upload_single_asset(
+        global_asset_id=global_asset_id,
+        asset_id=asset_id,
+        type=type,
+        element_id=element_id,
+        file_service=file_service,
+    )
 
 
 @router.get("/{element_id}", response_model=AssetDocument, summary="프로젝트 상세 조회")
