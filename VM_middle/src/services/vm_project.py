@@ -41,6 +41,7 @@ from src.utils.xml_parser import (
     parse_cutting_tool_13399_xml,
     parse_dt_file_xml,
     parse_material_xml,
+    make_vm_dt_file_xml,
 )
 from src.services.vm_file import VmFileService
 from src.utils.stock import STOCK_ITEMS
@@ -737,6 +738,7 @@ class VmProjectService:
         2) vm_project 문서 생성(초기 상태)
         3) GridFS 업로드 + vm_file 2건 생성
         4) vm_project.latest_files 포인터 갱신 + 상태 'ready'
+        5) (추가) tmp/<proj_name> 작업 디렉토리 정리
         """
         # 1) 파일 생성 단계
         stock, project_file, debug = await self.preview_from_iso_with_nc(payload)
@@ -744,92 +746,104 @@ class VmProjectService:
         prj_path = debug["project_prj"]  # tmp/<proj>/<eid>[ -N].prj
         proj_name = debug.get("proj_name")
         dtfile_meta = debug.get("dt_file") or {}
+        work_dir = debug.get("work_dir")  # 👈 tmp/<proj_name>
 
-        # 2) vm_project 생성 (초기)
-        vm_project_id = await self.dao.insert_initial_from_iso(
-            source="iso",
-            gid=payload.gid,
-            aid=payload.aid,
-            eid=payload.eid,
-            wpid=payload.wpid,
-            project_file_draft=project_file.model_dump(),
-            proj_name=proj_name,
-        )
+        try:
+            # 2) vm_project 생성 (초기)
+            vm_project_id = await self.dao.insert_initial_from_iso(
+                source="iso",
+                gid=payload.gid,
+                aid=payload.aid,
+                eid=payload.eid,
+                wpid=payload.wpid,
+                project_file_draft=project_file.model_dump(),
+                proj_name=proj_name,
+            )
 
-        # 3) GridFS 업로드 + vm_file 생성
-        # 3-1) ncdata.zip (파일명은 무조건 'ncdata.zip')
-        zip_vm_file_id = await self.vm_file_svc.create_from_path(
-            vm_project_id=vm_project_id,
-            kind="nc-split-zip",
-            file_path=zip_path,
-            original_name="ncdata.zip",  # <- 고정
-            content_type="application/zip",
-            meta={
-                "source": "iso",
-                "gid": payload.gid,
-                "aid": payload.aid,
-                "eid": payload.eid,
-                "wpid": payload.wpid,
-                "dt_file": {  # 어떤 원본 dt_file에서 분할했는지 추적
-                    "aid": dtfile_meta.get("aid"),
-                    "eid": dtfile_meta.get("eid"),
+            # 3) GridFS 업로드 + vm_file 생성
+            # 3-1) ncdata.zip (파일명은 무조건 'ncdata.zip')
+            zip_vm_file_id = await self.vm_file_svc.create_from_path(
+                vm_project_id=vm_project_id,
+                kind="nc-split-zip",
+                file_path=zip_path,
+                original_name="ncdata.zip",  # <- 고정
+                content_type="application/zip",
+                meta={
+                    "source": "iso",
+                    "gid": payload.gid,
+                    "aid": payload.aid,
+                    "eid": payload.eid,
+                    "wpid": payload.wpid,
+                    "dt_file": {  # 어떤 원본 dt_file에서 분할했는지 추적
+                        "aid": dtfile_meta.get("aid"),
+                        "eid": dtfile_meta.get("eid"),
+                    },
                 },
-            },
-        )
+            )
 
-        # 3-2) project.prj (JSON 내용, 파일명은 실제 생성된 이름 기록)
-        prj_vm_file_id = await self.vm_file_svc.create_from_path(
-            vm_project_id=vm_project_id,
-            kind="vm-project-json",
-            file_path=prj_path,
-            original_name=os.path.basename(prj_path),
-            content_type="application/octet-stream",
-            meta={
-                "source": "iso",
-                "gid": payload.gid,
-                "aid": payload.aid,
-                "eid": payload.eid,
-                "wpid": payload.wpid,
-                "process_count": project_file.process_count,
-            },
-        )
+            # 3-2) project.prj (JSON 내용, 파일명은 실제 생성된 이름 기록)
+            prj_vm_file_id = await self.vm_file_svc.create_from_path(
+                vm_project_id=vm_project_id,
+                kind="vm-project-json",
+                file_path=prj_path,
+                original_name=os.path.basename(prj_path),
+                content_type="application/octet-stream",
+                meta={
+                    "source": "iso",
+                    "gid": payload.gid,
+                    "aid": payload.aid,
+                    "eid": payload.eid,
+                    "wpid": payload.wpid,
+                    "process_count": project_file.process_count,
+                },
+            )
 
-        # 4) vm_project 최신 포인터/상태 갱신
-        await self.dao.set_latest_files(
-            vm_project_id,
-            {
-                "nc-split-zip": zip_vm_file_id,
-                "vm-project-json": prj_vm_file_id,
-            },
-        )
-        # 5) 유효성 검사 → 상태 반영
-        validation_errors = self._validate_project_file(project_file)
+            # 4) vm_project 최신 포인터/상태 갱신
+            await self.dao.set_latest_files(
+                vm_project_id,
+                {
+                    "nc-split-zip": zip_vm_file_id,
+                    "vm-project-json": prj_vm_file_id,
+                },
+            )
 
-        tool_mismatch_errors = debug.get("tool_number_mismatches") or []
-        if tool_mismatch_errors:
-            validation_errors.extend(tool_mismatch_errors)
+            # 5) 유효성 검사 → 상태 반영
+            validation_errors = self._validate_project_file(project_file)
 
-        await self.dao.set_validation_result(
-            vm_project_id,
-            is_valid=(len(validation_errors) == 0),
-            errors=validation_errors,
-            next_status_if_valid="ready",
-            next_status_if_invalid="needs-fix",
-        )
+            tool_mismatch_errors = debug.get("tool_number_mismatches") or []
+            if tool_mismatch_errors:
+                validation_errors.extend(tool_mismatch_errors)
 
-        return {
-            "vm_project_id": str(vm_project_id),
-            "status": "ready" if not validation_errors else "needs-fix",
-            "files": {
-                "nc_split_zip_id": str(zip_vm_file_id),
-                "project_json_id": str(prj_vm_file_id),
-            },
-            "validation": {
-                "is_valid": len(validation_errors) == 0,
-                "errors": validation_errors,
-            },
-            "debug": debug,
-        }
+            await self.dao.set_validation_result(
+                vm_project_id,
+                is_valid=(len(validation_errors) == 0),
+                errors=validation_errors,
+                next_status_if_valid="ready",
+                next_status_if_invalid="needs-fix",
+            )
+
+            return {
+                "vm_project_id": str(vm_project_id),
+                "status": "ready" if not validation_errors else "needs-fix",
+                "files": {
+                    "nc_split_zip_id": str(zip_vm_file_id),
+                    "project_json_id": str(prj_vm_file_id),
+                },
+                "validation": {
+                    "is_valid": len(validation_errors) == 0,
+                    "errors": validation_errors,
+                },
+                "debug": debug,
+            }
+
+        finally:
+            # ✅ tmp/<proj_name> 정리 (성공/실패 상관없이 시도)
+            if work_dir and os.path.isdir(work_dir):
+                try:
+                    shutil.rmtree(work_dir)
+                    logger.info("Cleaned up tmp work_dir: %s", work_dir)
+                except Exception as e:
+                    logger.warning("Failed to cleanup tmp work_dir %s: %s", work_dir, e)
 
     def _validate_project_file(self, pf: ProjectFileOut) -> list[str]:
         errors: list[str] = []
@@ -1522,11 +1536,7 @@ class VmProjectService:
             # 지정한 시간만큼 대기
             await asyncio.sleep(interval_sec)
 
-    async def poll_vm_status(
-        self,
-        vm_project_id: ObjectId,
-        token: str | None = None,  # ← 토큰을 선택적으로 받도록 변경
-    ) -> dict:
+    async def poll_vm_status(self, vm_project_id: ObjectId, token: str) -> dict:
         doc = await self.dao.get(vm_project_id)
         if not doc:
             raise HTTPException(404, "vm_project not found")
@@ -1535,53 +1545,263 @@ class VmProjectService:
         if not job_id:
             raise HTTPException(400, "vm_job_id is empty")
 
-        # 🔽 여기서 토큰이 없으면 한 번만 발급
-        if token is None:
-            token = await self._vm_issue_token()
-
+        # VM API URL 구성
         base = str(settings.VM_API_URL).rstrip("/")
-        url = base + str(settings.VM_GET_JOB_DETAIL_PATH).format(macsim_id=job_id)
+        url = base + settings.VM_GET_JOB_DETAIL_PATH.format(macsim_id=job_id)
 
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             try:
                 r = await client.get(url, headers=headers)
                 r.raise_for_status()
             except httpx.HTTPError as e:
                 msg = getattr(e.response, "text", str(e))
-                # 폴링 실패 → status는 유지, 에러 메시지만 기록
                 await self.dao.set_vm_poll_result(
                     vm_project_id,
                     status=doc.get("status", "running"),
-                    vm_state=doc.get("vm_raw_status"),  # 이전 state 유지
+                    vm_state=doc.get("vm_raw_status"),
                     vm_error_message=f"VM poll error: {msg}",
                 )
                 raise HTTPException(502, detail=f"VM poll error: {msg}")
 
-        vm_resp = self._safe_json(r)
-        vm_state = self._extract_state(vm_resp)
+        resp = self._safe_json(r)
+        vm_state = self._extract_state(resp)  # 응답 구조가 달라져도 한 곳에서 처리
 
-        # VM state → 우리 status 맵핑
-        if vm_state in ("WAIT", "RUNNING"):
+        # ===== 상태 분기 =====
+        if vm_state in ("WAIT", "RUN"):
+            # 아직 진행 중 → 계속 running 으로 유지
             new_status = "running"
-        elif vm_state in ("FINISH", "COMPLETED", "SUCCESS"):
-            new_status = "completed"
-        elif vm_state in ("ERROR", "FAILED", "CANCELED"):
-            new_status = "failed"
-        else:
-            new_status = "running"  # 모르는 값이면 일단 running 유지
 
+        elif vm_state in ("ERROR", "ERROR-AppsPro Down"):
+            # 더 이상 폴링 불필요 → failed 로 종료 + 에러메시지 저장
+            new_status = "failed"
+            await self.dao.set_vm_poll_result(
+                vm_project_id,
+                status=new_status,
+                vm_state=vm_state,
+                vm_error_message=vm_state,
+            )
+            return {
+                "vm_project_id": str(vm_project_id),
+                "status": new_status,
+                "vm_state": vm_state,
+            }
+
+        elif vm_state == "COMPLETE":
+            # VM 결과 ZIP 링크
+            result_link = resp.get("download_file_link")
+
+            if not result_link:
+                # COMPLETE 라고 했는데 파일 링크가 없으면 우리 쪽에선 실패로 처리
+                await self.dao.set_vm_poll_result(
+                    vm_project_id,
+                    status="failed",
+                    vm_state="ERROR",
+                    vm_error_message=("VM returned COMPLETE but no download_file_link"),
+                )
+                return {
+                    "vm_project_id": str(vm_project_id),
+                    "status": "failed",
+                    "vm_state": "ERROR",
+                }
+
+            # dt_file XML 생성 및 ISO 업로드
+            await self._create_and_upload_vm_dt_file(doc, result_link)
+
+            # VM_PROJECT 상태도 completed 로 전환
+            new_status = "completed"
+
+        else:
+            # 알 수 없는 상태값이면 일단 running 유지 (로그만 남기고)
+            logger.warning(
+                "Unknown VM state '%s' for project %s; keep running",
+                vm_state,
+                str(vm_project_id),
+            )
+            new_status = "running"
+
+        # 공통: VM 상태/에러 갱신
         await self.dao.set_vm_poll_result(
             vm_project_id,
             status=new_status,
             vm_state=vm_state,
-            vm_error_message=None,
+            vm_error_message=None if new_status != "failed" else vm_state,
         )
 
         return {
             "vm_project_id": str(vm_project_id),
-            "status": new_status,  # 내부 상태
-            "vm_state": vm_state,  # VM에서 온 state
-            "vm_job_id": str(job_id),
+            "status": new_status,
+            "vm_state": vm_state,
         }
+
+    async def _compute_next_vm_seq_id(
+        self,
+        *,
+        gid: str,
+        aid: str,
+        eid: str,
+        wpid: Optional[str],
+    ) -> int:
+        """
+        동일한 (gid, aid, eid, wpid) 조합으로 이미 등록된 VM dt_file 들을 ISO에서 조회해서
+        SEQ_ID 최댓값 + 1 을 반환한다.
+        - 없으면 1부터 시작.
+        """
+        pairs = await self._list_dtfile_pairs(gid=gid)
+        max_seq = 0
+
+        for aid_try, eid_try in pairs:
+            # 해당 gid 아래의 모든 dt_file 후보 조회
+            try:
+                xml = await self._fetch_dt_file_xml(
+                    eid=eid_try,
+                    gid=gid,
+                    aid=aid_try,
+                )
+            except Exception:
+                continue
+
+            if not xml:
+                continue
+
+            info = parse_dt_file_xml(xml) or {}
+
+            # category 가 "VM" 인 것만 VM 결과로 간주
+            category = str(info.get("category") or "").strip().upper()
+            if category != "VM":
+                continue
+
+            # 참조 키( DT_GLOBAL_ASSET / DT_ASSET / DT_PROJECT / WORKPLAN )가
+            # 원본 iso 프로젝트(gid/aid/eid/wp) 와 일치하는지 검사
+            if not match_dt_file_refs(
+                info,
+                gid=gid,
+                aid=aid,
+                eid=eid,
+                wpid=wpid,
+            ):
+                continue
+
+            # properties 중 SEQ_ID 값 추출
+            props = info.get("properties") or []
+            for p in props:
+                if not isinstance(p, dict):
+                    continue
+                key = str(p.get("key") or "").strip()
+                if key != "SEQ_ID":
+                    continue
+                try:
+                    v = int(str(p.get("value") or "").strip())
+                except ValueError:
+                    v = None
+                if v is not None and v > max_seq:
+                    max_seq = v
+                break  # 하나 찾으면 그 dt_file 은 더 안 봄
+
+        return max_seq + 1 if max_seq > 0 else 1
+
+    async def _iso_register_vm_dt_file(
+        self,
+        *,
+        gid: str,
+        vm_aid: str,
+        vm_eid: str,
+        xml_str: str,
+    ) -> Dict[str, Any]:
+        """
+        VM 결과 dt_file(XML)을 ISO에 등록.
+
+        ISO 스펙:
+        - POST /api/v3/assets
+        - multipart/form-data
+          - xml: 업로드할 dt_asset XML (여러 dt_elements 포함 가능)
+          - upload_files: dt_file 요소들과 매칭되는 실제 파일들 (여러 개 가능, VM 결과는 링크만 쓰므로 비워둬도 됨)
+
+        여기서는:
+        - dt_asset 내에 우리가 만든 dt_file 이 이미 포함되어 있으므로
+          xml 파트만 파일처럼 올린다.
+        - VM 결과 ZIP 자체는 ISO에 직접 업로드하지 않고,
+          dt_file.path 에 S3 링크를 넣는 구조이므로 upload_files 는 보내지 않는다.
+        """
+        base = str(settings.ISO_API_URL).rstrip("/")
+        url = base + str(settings.ISO_PATH_ASSET_LIST)  # 예: "/api/v3/assets"
+
+        xml_bytes = xml_str.encode("utf-8")
+
+        # httpx 의 files 인자를 사용하면 multipart/form-data 로 전송된다.
+        # 필드 이름은 Swagger 에 나온 대로 "xml" 이어야 함.
+        files = {
+            "xml": ("vm_dt_file.xml", xml_bytes, "application/xml"),
+            # "upload_files" 는 VM 결과 파일을 ISO에 직접 올릴 게 아니라면 생략
+            # 필요하면 나중에 ("", b"") 등으로 비어 있는 필드를 추가할 수 있음.
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                r = await client.post(url, files=files)
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # ISO 스펙상 201/206/400 이 올 수 있음.
+                # 400 이면 e.response.text 에 summary / errors 가 있을 것.
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"ISO vm dt_file create error: {e.response.text}",
+                )
+
+        return self._safe_json(r)
+
+    async def _create_and_upload_vm_dt_file(
+        self,
+        vm_project_doc: dict,
+        download_link: str,
+    ) -> None:
+        """
+        VM에서 COMPLETE + download_file_link 가 온 경우:
+        1) 기존 VM dt_file 들을 보고 다음 SEQ_ID 계산
+        2) vm_aid / vm_eid 규칙(vm_001, vm_002...) 결정
+        3) make_vm_dt_file_xml 로 XML 생성
+        4) ISO에 dt_file 등록
+        """
+        gid = vm_project_doc.get("gid")
+        aid = vm_project_doc.get("aid")
+        eid = vm_project_doc.get("eid")
+        wpid = vm_project_doc.get("wpid")
+
+        if not (gid and aid and eid):
+            raise HTTPException(
+                status_code=400,
+                detail="vm_project has no gid/aid/eid for vm dt_file",
+            )
+
+        # 1) 기존 VM dt_file 들에서 SEQ_ID 최댓값 + 1 계산
+        seq_id = await self._compute_next_vm_seq_id(
+            gid=gid,
+            aid=aid,
+            eid=eid,
+            wpid=wpid,
+        )
+
+        # 2) vm aid/eid 규칙: vm_001, vm_002 ... (SEQ_ID와 통일)
+        vm_aid = f"vm_{seq_id:03d}"
+        vm_eid = vm_aid  # eid = asset_id 와 동일
+
+        # 3) XML 생성 (xml_parser.make_vm_dt_file_xml 사용)
+        xml_str = make_vm_dt_file_xml(
+            asset_global_id=gid,
+            vm_asset_id=vm_aid,
+            download_file_link=download_link,
+            gid=gid,
+            aid=aid,
+            eid=eid,
+            wpid=wpid,
+            seq_id=seq_id,
+        )
+
+        # 4) ISO 등록
+        await self._iso_register_vm_dt_file(
+            gid=gid,
+            vm_aid=vm_aid,
+            vm_eid=vm_eid,
+            xml_str=xml_str,
+        )

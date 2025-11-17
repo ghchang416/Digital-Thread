@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 import xmltodict
 from urllib.parse import urlsplit
+from datetime import datetime
 
 
 def _get_by_local(d: dict, local: str):
@@ -473,3 +474,76 @@ def match_dt_file_refs(
     if wpid:
         return (refs.get("WORKPLAN") or "") == wpid
     return True
+
+
+def make_vm_dt_file_xml(
+    *,
+    asset_global_id: str,
+    vm_asset_id: str,  # 예: "vm_001"
+    download_file_link: str,  # VM에서 받은 S3 URL
+    gid: str,  # DT_GLOBAL_ASSET (원본 프로젝트 gid)
+    aid: str,  # DT_ASSET (원본 프로젝트 aid)
+    eid: str,  # DT_PROJECT (원본 프로젝트 eid)
+    wpid: Optional[str],  # WORKPLAN (없으면 빈 문자열)
+    seq_id: int,  # 기존 SEQ_ID + 1 또는 1
+    now: Optional[datetime] = None,
+) -> str:
+    """
+    VM DT_FILE용 XML 생성.
+    - DATE 형식: YYYYMMDD HHMMSS → 예: 20251028 092000
+    """
+    now = now or datetime.now()
+    date_str = now.strftime("%Y%m%d %H%M%S")
+    wpid_val = wpid or ""
+
+    # vm dt_file 예시 구조에 맞춰 생성
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
+<dt_asset xmlns="http://digital-thread.re/dt_asset"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          schemaVersion="v31">
+  <asset_global_id>{asset_global_id}</asset_global_id>
+  <id>{vm_asset_id}</id>
+  <asset_kind>instance</asset_kind>
+  <dt_elements xsi:type="dt_file">
+    <element_id>{vm_asset_id}</element_id>
+    <category>VM</category>
+    <display_name></display_name>
+    <element_description>vm result file.</element_description>
+    <content_type>application/zip</content_type>
+    <value></value>
+    <path>{download_file_link}</path>
+    <reference>
+      <element_id></element_id>
+      <keys>
+        <key>DT_GLOBAL_ASSET</key>
+        <value>{gid}</value>
+      </keys>
+      <keys>
+        <key>DT_ASSET</key>
+        <value>{aid}</value>
+      </keys>
+      <keys>
+        <key>DT_PROJECT</key>
+        <value>{eid}</value>
+      </keys>
+      <keys>
+        <key>WORKPLAN</key>
+        <value>{wpid_val}</value>
+      </keys>
+    </reference>
+    <properties>
+      <key>NO_CODE</key>
+      <value>{vm_asset_id}</value>
+    </properties>
+    <properties>
+      <key>SEQ_ID</key>
+      <value>{seq_id}</value>
+    </properties>
+    <properties>
+      <key>Date</key>
+      <value>{date_str}</value>
+    </properties>
+  </dt_elements>
+</dt_asset>
+"""
+    return xml
