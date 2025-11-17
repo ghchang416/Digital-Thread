@@ -4,9 +4,11 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Mapping
 import shutil
 import json
+
+import asyncio
 
 import httpx
 from bson import ObjectId
@@ -31,7 +33,7 @@ from src.utils.nc_splitter import (
     extract_tool_numbers_from_paths,  # ([saved_paths]) -> List[int|None]
     process_nc_text,  # (nc_text: str, output_dir: str, base_filename_with_ext: str) -> List[str]
 )
-from src.utils.stock import lookup_stock_code
+from src.utils.stock import lookup_stock_code, is_known_stock_code
 from src.utils.xml_parser import (
     extract_material_ref_from_project_xml,  # -> Optional[(gid, aid, eid)]
     extract_tool_refs_in_order,  # (project_xml, wpid) -> [{gid, aid, eid, tool_element_id, ...}]
@@ -42,6 +44,10 @@ from src.utils.xml_parser import (
 )
 from src.services.vm_file import VmFileService
 from src.utils.stock import STOCK_ITEMS
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------- 내부 유틸 (정규식) ----------------
 _COORD_RE = re.compile(r"\b([xyz])\s+coordinates_mm\s*:\s*([+-]?\d+(?:\.\d+)?)", re.I)
@@ -290,30 +296,97 @@ class VmProjectService:
         )
         return _id, stock, pf
 
-    async def get_project_file(self, _id: ObjectId) -> ProjectFileOut:
+    async def get_project_file(
+        self, _id: ObjectId, *, source: str = "draft"
+    ) -> ProjectFileOut:
+        if source == "file":
+            merged = await self._load_current_project_json(
+                _id
+            )  # 파일 있으면 파일, 없으면 draft 반환
+            return ProjectFileOut(**merged)
+        # 기본: draft
         doc = await self.dao.get(_id)
         pf = (doc or {}).get("project_file_draft") or {}
         return ProjectFileOut(**pf)
 
     async def patch_stock(self, _id: ObjectId, patch: StockPatchIn) -> ProjectFileOut:
+        # --- 0) 스톡 코드 사전 검증: 미정의 코드면 차단 ---
+        if patch.stock_type is not None and not is_known_stock_code(patch.stock_type):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": f"unknown stock_type: {patch.stock_type}",
+                    "hint": "사전에 정의된 스톡 코드만 허용됩니다. /api/v1/vm-project/stocks 로 목록을 확인하세요.",
+                },
+            )
+
         doc = await self.dao.get(_id)
         pf = (doc or {}).get("project_file_draft") or {}
+
+        # --- DB 초안: stock 필드만 교체 ---
+        changed: dict[str, object] = {}
         if patch.stock_type is not None:
             pf["stock_type"] = patch.stock_type
+            changed["stock_type"] = patch.stock_type
         if patch.stock_size is not None:
             pf["stock_size"] = patch.stock_size
+            changed["stock_size"] = patch.stock_size
+
         await self.dao.update_project_file_draft(_id, pf)
-        return ProjectFileOut(**pf)
+
+        # --- 파일: stock 필드만 머지 ---
+        try:
+            res = await self._write_project_json_merged(_id, changed)
+            merged = res["merged"]
+        except HTTPException:
+            # 파일이 아직 없을 수 있음(초기 단계) → 이 경우 파일 생성 스킵하고 draft만 유지
+            merged = pf
+
+        # --- 유효성 재검증은 머지된 최종 JSON 기준 ---
+        pf_model = ProjectFileOut(**merged)
+        validation_errors = self._validate_project_file(pf_model)
+        await self.dao.set_validation_result(
+            _id,
+            is_valid=(len(validation_errors) == 0),
+            errors=validation_errors,
+            next_status_if_valid="ready",
+            next_status_if_invalid="needs-fix",
+        )
+        return pf_model
 
     async def patch_process(
         self, _id: ObjectId, patch: ProcessPatchIn
     ) -> ProjectFileOut:
         doc = await self.dao.get(_id)
         pf = (doc or {}).get("project_file_draft") or {}
-        pf["process"] = [p.model_dump() for p in patch.process]
-        pf["process_count"] = len(patch.process)
+
+        # --- DB 초안: process 필드만 교체 ---
+        new_list = [p.model_dump() for p in patch.process]
+        pf["process"] = new_list
+        pf["process_count"] = len(new_list)
         await self.dao.update_project_file_draft(_id, pf)
-        return ProjectFileOut(**pf)
+
+        # --- 파일: process 필드만 머지 ---
+        try:
+            res = await self._write_project_json_merged(
+                _id,
+                {"process": new_list, "process_count": len(new_list)},
+            )
+            merged = res["merged"]
+        except HTTPException:
+            merged = pf
+
+        # --- 유효성 재검증(머지된 최종 JSON 기준) ---
+        pf_model = ProjectFileOut(**merged)
+        validation_errors = self._validate_project_file(pf_model)
+        await self.dao.set_validation_result(
+            _id,
+            is_valid=(len(validation_errors) == 0),
+            errors=validation_errors,
+            next_status_if_valid="ready",
+            next_status_if_invalid="needs-fix",
+        )
+        return pf_model
 
     # ---------------- 라우터용 미리보기(빈 process) ----------------
     async def preview_from_iso(
@@ -710,7 +783,7 @@ class VmProjectService:
             kind="vm-project-json",
             file_path=prj_path,
             original_name=os.path.basename(prj_path),
-            content_type="application/json",
+            content_type="application/octet-stream",
             meta={
                 "source": "iso",
                 "gid": payload.gid,
@@ -762,8 +835,11 @@ class VmProjectService:
         errors: list[str] = []
 
         # stock
-        if not pf.stock_type:
+        if pf.stock_type is None:
             errors.append("stock_type is empty")
+        elif not is_known_stock_code(pf.stock_type):
+            errors.append(f"stock_type {pf.stock_type} is not allowed")
+
         if not pf.stock_size or not _STOCK_SIZE_6NUM_RE.match(pf.stock_size):
             errors.append("stock_size must be 6 numbers separated by commas")
 
@@ -845,8 +921,13 @@ class VmProjectService:
         is_valid = val.get("is_valid")
 
         pf_dict = doc.get("project_file_draft") or {}
-        # ProjectFileOut 생성(빈값도 안전하게)
         project_file = ProjectFileOut(**pf_dict)
+
+        # 👇 vm 필드 추출
+        vm_job_id = doc.get("vm_job_id")
+        vm_last_polled_at = doc.get("vm_last_polled_at")
+        vm_error_message = doc.get("vm_error_message")
+        vm_raw_status = doc.get("vm_raw_status")
 
         return VmProjectDetailOut(
             id=str(doc.get("_id")),
@@ -862,6 +943,10 @@ class VmProjectService:
             validation_is_valid=is_valid,
             validation_errors=errors if isinstance(errors, list) else [],
             project_file_draft=project_file,
+            vm_job_id=str(vm_job_id) if vm_job_id is not None else None,
+            vm_last_polled_at=vm_last_polled_at,
+            vm_error_message=vm_error_message,
+            vm_raw_status=vm_raw_status,
         )
 
     async def list_stock_items(self, q: str | None = None) -> StockItemsResponse:
@@ -914,3 +999,589 @@ class VmProjectService:
             if n is not None and w is not None and n != w:
                 errors.append(f"process[{i}]: tool number mismatch (nc={n}, ws={w})")
         return errors
+
+    async def request_vm(self, _id: ObjectId) -> dict:
+        doc = await self.dao.get(_id)
+        if not doc:
+            raise HTTPException(404, "vm_project not found")
+
+        status = (doc.get("status") or "").strip()
+        if status != "ready":
+            raise HTTPException(
+                400,
+                detail={
+                    "message": f"status must be 'ready' to request VM (current: {status})",
+                    "validation": doc.get("validation") or {},
+                },
+            )
+
+        pf_dict = doc.get("project_file_draft") or {}
+        project_file = ProjectFileOut(**pf_dict)
+
+        # 1) VM 시스템에 job 생성
+        job_id = await self._vm_create_job(_id, project_file)
+
+        # 2) 우리 DB에 job_id + status=running 기록
+        await self.dao.set_vm_job_id(_id, job_id)
+        await self.dao.set_status(_id, "running")
+
+        return {
+            "vm_project_id": str(_id),
+            "vm_job_id": job_id,
+            "status": "running",
+        }
+
+    async def _load_current_project_json(self, vm_project_id: ObjectId) -> dict:
+        """
+        latest_files['vm-project-json']가 있으면 GridFS에서 읽어 JSON 반환.
+        없으면 DB draft를 기본값으로 사용.
+        """
+        doc = await self.dao.get(vm_project_id)
+        pf_dict = (doc or {}).get("project_file_draft") or {}
+        latest = (doc or {}).get("latest_files") or {}
+        vmf_id = latest.get("vm-project-json")
+        if not vmf_id:
+            # 파일 아직 없으면 draft를 반환(파일 생성은 호출부에서 판단)
+            return dict(pf_dict)
+
+        vmf_doc = await self.vm_file_svc.dao.get(vmf_id)
+        if not vmf_doc:
+            return dict(pf_dict)
+
+        grid_id = vmf_doc.get("gridfs_id")
+        if not grid_id:
+            return dict(pf_dict)
+
+        data = await self.vm_file_svc.filestore.gfs_get_bytes(grid_id)
+        try:
+            return json.loads(data.decode("utf-8"))
+        except Exception:
+            # 파싱 실패 시에도 draft로 폴백
+            return dict(pf_dict)
+
+    async def _write_project_json_merged(
+        self,
+        vm_project_id: ObjectId,
+        patch: Mapping[
+            str, object
+        ],  # 예: {"stock_type": 45, "stock_size": "..."} 또는 {"process": [...], "process_count": 7}
+    ) -> dict:
+        """
+        - 현재 JSON 로드 → patch 키만 덮어쓰기(부분 수정)
+        - 새 JSON을 GridFS에 업로드
+        - vm_file.gridfs_id 포인터만 교체(구 파일 삭제)
+        - 반환: {"vm_file_id", "old_gridfs_id", "new_gridfs_id", "merged"}
+        """
+        # 현재 JSON 확보
+        current = await self._load_current_project_json(vm_project_id)
+        merged = dict(current)
+        for k, v in patch.items():
+            merged[k] = v
+
+        # latest vm-project-json vm_file
+        proj_doc = await self.dao.get(vm_project_id)
+        latest = (proj_doc or {}).get("latest_files") or {}
+        vmf_id = latest.get("vm-project-json")
+        if not vmf_id:
+            # 아직 파일이 없으면 새로 생성해도 되지만, 여기서는 "없다"를 명시적으로 에러 처리
+            # 필요 시: self.vm_file_svc.create_from_path(...) 로 새로 만들도록 분기 가능
+            raise HTTPException(400, detail="vm-project-json not found")
+
+        vmf_doc = await self.vm_file_svc.dao.get(vmf_id)
+        if not vmf_doc:
+            raise HTTPException(404, detail="vm_file not found")
+
+        old_grid = vmf_doc.get("gridfs_id")
+        original_name = vmf_doc.get("original_name") or "project.prj"
+        content_type = vmf_doc.get("content_type") or "application/octet-stream"
+
+        data_bytes = json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8")
+
+        new_grid = await self.vm_file_svc.filestore.gfs_put_bytes(
+            data_bytes,
+            filename=original_name,
+            content_type=content_type,
+            metadata={"source": "patch"},
+        )
+
+        await self.vm_file_svc.dao.update_gridfs_pointer(vmf_id, new_grid)
+
+        # 구 파일은 정책에 따라 삭제(보관 원하면 주석)
+        if old_grid:
+            try:
+                await self.vm_file_svc.filestore.gfs_delete(old_grid)
+            except Exception:
+                pass
+
+        return {
+            "vm_file_id": vmf_id,
+            "old_gridfs_id": old_grid,
+            "new_gridfs_id": new_grid,
+            "merged": merged,
+        }
+
+    # ==========VM 호출 관련 ==========
+    async def start_vm_job(self, vm_project_id: ObjectId) -> Dict[str, Any]:
+        """
+        1) status가 ready인지 확인 (아니면 400)
+        2) 프로젝트 JSON, NC ZIP을 GridFS에서 꺼내 VM S3 업로드 API로 각각 업로드
+           - query param: parent_path = proj_name (project_id는 넣지 않음)
+           - 응답에서 S3 경로 문자열을 추출(없으면 에러)
+        3) 토큰 발급 (username/password from settings)
+        4) VM 생성 API 호출 (machine_name=eid, upload_file_link1/2 = 경로)
+        5) 성공 시 vm_job_id / state / vm_last_polled_at / status=running 업데이트
+           실패 시 vm_error_message만 기록하고 에러 리턴
+        """
+        # 0) 프로젝트 문서 조회 및 상태 확인
+        doc = await self.dao.get(vm_project_id)
+        if not doc:
+            raise HTTPException(404, "vm_project not found")
+
+        status = (doc.get("status") or "").strip()
+        existing_job_id = doc.get("vm_job_id")
+
+        # 이미 running 상태인 프로젝트는 재시작 불가
+        if status == "running":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "이미 VM 작업이 실행 중인 프로젝트입니다.",
+                    "status": status,
+                    "vm_job_id": existing_job_id,
+                },
+            )
+
+        # ready인데도 vm_job_id가 남아 있으면 재시작 막기 (데이터 정합성 보호)
+        if status == "ready" and existing_job_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "이미 VM 작업 ID가 할당된 프로젝트입니다. 재시작하려면 관리자에게 문의하세요.",
+                    "status": status,
+                    "vm_job_id": existing_job_id,
+                },
+            )
+
+        if status != "ready":
+            # needs-fix / completed / failed 등
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "status가 'ready' 상태에서만 VM 작업을 시작할 수 있습니다.",
+                    "status": status,
+                },
+            )
+
+        proj_name = doc.get("proj_name")
+        if not proj_name:
+            raise HTTPException(400, "vm_project has no proj_name")
+
+        latest_files = doc.get("latest_files") or {}
+        nc_file_id = latest_files.get("nc-split-zip")
+        prj_file_id = latest_files.get("vm-project-json")
+        if not nc_file_id or not prj_file_id:
+            raise HTTPException(400, "vm_project has no latest vm files")
+        # 1) S3 업로드: project JSON / ncdata.zip
+        project_s3_path = await self._vm_upload_latest_file(
+            vm_file_id=prj_file_id,
+            parent_path=proj_name,
+        )
+        nc_s3_path = await self._vm_upload_latest_file(
+            vm_file_id=nc_file_id,
+            parent_path=proj_name,
+        )
+
+        # 2) 토큰 발급
+        token = await self._vm_issue_token()
+
+        # 3) VM job 생성 호출
+        try:
+            vm_resp = await self._vm_create_job(
+                token=token,
+                machine_name=str(doc.get("eid") or ""),
+                project_s3_path=project_s3_path,
+                nc_s3_path=nc_s3_path,
+            )
+        except HTTPException as e:
+            # 생성 실패 시: 에러 메시지만 기록해두고 그대로 전파
+            await self.dao.set_vm_error(
+                vm_project_id,
+                message=str(e.detail),
+                vm_raw_status=None,
+            )
+            raise
+
+        # 4) 응답에서 job_id / state 추출
+        vm_job_id = self._extract_job_id(vm_resp)
+        if not vm_job_id:
+            # id가 없으면 우리 쪽엔 아무것도 기록하지 않고 에러
+            await self.dao.set_vm_error(
+                vm_project_id,
+                message="VM create-job did not return id",
+                vm_raw_status=vm_resp,
+            )
+            raise HTTPException(502, "VM create-job did not return id")
+
+        vm_state = self._extract_state(vm_resp)
+
+        # 5) DB에 job 시작 정보 기록
+        await self.dao.set_vm_job_started(
+            vm_project_id,
+            vm_job_id=str(vm_job_id),
+            vm_state=vm_state,
+        )
+
+        return {
+            "vm_project_id": str(vm_project_id),
+            "status": "running",
+            "vm_job_id": str(vm_job_id),
+            "vm_state": vm_state,
+        }
+
+    # ---------- 내부 유틸: VM 파일 업로드 ----------
+    async def _vm_upload_latest_file(
+        self,
+        *,
+        vm_file_id: ObjectId,
+        parent_path: str,
+    ) -> str:
+        """
+        GridFS에서 파일바이트를 읽어 VM 업로드 API로 전송.
+        - Query: parent_path=<proj_name>
+        - Body: multipart/form-data, file 필드
+        - 응답에서 업로드된 파일 URL(경로) 문자열 추출(없으면 502)
+        """
+
+        # 1) vm_file 도큐먼트 조회
+        vmf_doc = await self.vm_file_svc.dao.get(vm_file_id)
+        if not vmf_doc:
+            raise HTTPException(404, detail="vm_file not found")
+
+        gridfs_id = vmf_doc.get("gridfs_id")
+        if not gridfs_id:
+            raise HTTPException(400, detail="vm_file has no gridfs_id")
+
+        # 2) GridFS에서 파일 내용 로드
+        content = await self.vm_file_svc.filestore.gfs_get_bytes(gridfs_id)
+        filename = vmf_doc.get("original_name") or "file.bin"
+
+        base = str(settings.VM_API_URL).rstrip("/")  # VM API 베이스 URL
+        url = base + str(settings.VM_S3_UPLOAD_DETAIL)
+
+        logger.info(
+            "VM /s3-upload call: url=%s, parent_path=%s, filename=%s, size=%d",
+            url,
+            parent_path,
+            filename,
+            len(content) if content is not None else -1,
+        )
+
+        # 3) 업로드 요청 (requests 버전과 최대한 유사하게 전송)
+        try:
+            async with httpx.AsyncClient(timeout=180.0, http2=False) as client:
+                r = await client.post(
+                    url,
+                    params={"parent_path": parent_path},  # project_id는 사용 안 함
+                    # 🔽 requests의 `files={"file": f}` 와 최대한 비슷하게
+                    files={"file": (filename, content)},
+                )
+        except httpx.ConnectError as e:
+            # DNS 실패, 연결 실패 등
+            logger.error("VM upload connect error: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"VM upload connection error: {e}",
+            )
+        except httpx.HTTPError as e:
+            # 기타 HTTP 레벨 에러
+            logger.error("VM upload HTTP error: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"VM upload HTTP error: {e}",
+            )
+
+        # 4) 상태 코드 확인
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "VM upload failed: status=%s, text=%s",
+                e.response.status_code,
+                e.response.text,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"VM upload failed: {e.response.text}",
+            )
+
+        # 5) JSON 파싱 + 경로 추출
+        data = self._safe_json(r)  # 이미 구현되어 있다고 가정
+        s3_path = self._extract_s3_path(data)  # file_url 등에서 추출
+
+        if not s3_path:
+            # "리턴 값에 경로값이 제대로 오지 않았다면 에러" 요구사항
+            logger.error("VM upload did not return path. response=%s", data)
+            raise HTTPException(
+                status_code=502,
+                detail="VM upload did not return path",
+            )
+
+        logger.info("VM /s3-upload success: path=%s", s3_path)
+        return s3_path
+
+    async def _vm_issue_token(self) -> str:
+        base = str(settings.VM_API_URL).rstrip("/")
+        url = base + str(settings.VM_LOGIN_TOKEN)
+        token_body = {
+            "username": settings.VM_USERNAME,
+            "password": settings.VM_PASSWORD,
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, data=token_body)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                raise HTTPException(502, detail=f"VM token error: {e.response.text}")
+
+            data = self._safe_json(r)
+
+            # ✅ 스펙에 맞춰 깔끔하게
+            access_token = data.get("access_token")
+            if not access_token:
+                raise HTTPException(
+                    502, detail="VM token response missing access_token"
+                )
+
+            # token_type도 필요하면 같이 써도 됨 (기본 bearer)
+            token_type = (data.get("token_type") or "bearer").capitalize()
+            # _vm_create_job 쪽에서: headers={"Authorization": f"{token_type} {access_token}"}
+
+            return str(access_token)
+
+    async def _vm_create_job(
+        self,
+        *,
+        token: str,
+        machine_name: str,
+        project_s3_path: str,
+        nc_s3_path: str,
+    ) -> Dict[str, Any]:
+        base = str(settings.VM_API_URL).rstrip("/")
+        # 생성 엔드포인트는 config에 선언돼 있다고 가정
+        url = base + str(settings.VM_JOB_CREATE)
+
+        body = {
+            "machine_name": machine_name,
+            "upload_file_link1": project_s3_path,
+            "upload_file_link2": nc_s3_path,
+        }
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(url, json=body, headers=headers)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                raise HTTPException(502, detail=f"VM create error: {e.response.text}")
+            return self._safe_json(r)
+
+    def _extract_state(self, data: Any) -> Optional[str]:
+        if isinstance(data, dict):
+            v = data.get("state")
+            if v is not None:
+                return str(v)
+        return None
+
+    @staticmethod
+    def _safe_json(r: httpx.Response) -> Dict[str, Any]:
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text}
+
+    @staticmethod
+    def _extract_s3_path(data: Dict[str, Any]) -> Optional[str]:
+        """
+        /s3-upload 응답에서 업로드된 파일의 URL/경로를 추출한다.
+
+        현재 스펙:
+        {
+          "file_url": "https://kitech-file.s3.ap-northeast-2.amazonaws.com/...."
+        }
+        """
+        if not isinstance(data, dict):
+            return None
+
+        candidates = [
+            data.get("file_url"),  # ✅ 현재 스펙
+            data.get("path"),
+            data.get("s3_path"),
+            data.get("url"),
+            (
+                (data.get("data") or {}).get("file_url")
+                if isinstance(data.get("data"), dict)
+                else None
+            ),
+            (
+                (data.get("data") or {}).get("path")
+                if isinstance(data.get("data"), dict)
+                else None
+            ),
+        ]
+
+        for c in candidates:
+            if isinstance(c, str) and c.strip():
+                return c.strip()
+        return None
+
+    @staticmethod
+    def _extract_job_id(data: Dict[str, Any]) -> Optional[str]:
+        """
+        생성 응답에서 job 식별자를 관용적으로 추출:
+        - data["id"] or data["_id"] or data["job_id"] or data["data"]["id"] ...
+        """
+        if not isinstance(data, dict):
+            return None
+        candidates = [
+            data.get("id"),
+            data.get("_id"),
+            data.get("job_id"),
+            (
+                (data.get("data") or {}).get("id")
+                if isinstance(data.get("data"), dict)
+                else None
+            ),
+            (
+                (data.get("result") or {}).get("id")
+                if isinstance(data.get("result"), dict)
+                else None
+            ),
+        ]
+        for c in candidates:
+            if c is None:
+                continue
+            return str(c)
+        return None
+
+    # =========== 풀링관련 ===========
+    async def poll_all_running_once(self) -> dict:
+        """
+        status='running' 인 vm_project 들을 한 번씩 폴링해서
+        상태를 업데이트한다.
+        """
+        ids = await self.dao.list_running_ids()
+        results: list[dict] = []
+
+        if not ids:
+            return {"polled_count": 0, "results": []}
+
+        # 🔽 여기에서 토큰 한 번만 발급
+        try:
+            token = await self._vm_issue_token()
+        except HTTPException as e:
+            logger.warning(
+                "VM token issue failed while polling all running: %s", e.detail
+            )
+            # 토큰 못 받았으면 이번 라운드는 그냥 스킵
+            return {
+                "polled_count": 0,
+                "results": [],
+                "error": f"token_issue_failed: {e.detail}",
+            }
+
+        for _id in ids:
+            try:
+                # 🔽 토큰 재사용
+                res = await self.poll_vm_status(_id, token=token)
+                results.append(res)
+            except HTTPException as e:
+                # 개별 프로젝트 폴링 실패는 로그만 찍고 계속 진행
+                logger.warning("VM poll failed for project %s: %s", str(_id), e.detail)
+            except Exception as e:
+                logger.exception(
+                    "Unexpected error while polling project %s: %s", str(_id), e
+                )
+
+        return {
+            "polled_count": len(ids),
+            "results": results,
+        }
+
+    async def vm_polling_loop(self, interval_sec: int = 300) -> None:
+        """
+        백그라운드에서 무한 루프로 동작하면서
+        일정 간격(interval_sec)마다 poll_all_running_once() 를 호출한다.
+        """
+        logger.info("VM polling loop started (interval=%s sec)", interval_sec)
+        while True:
+            try:
+                await self.poll_all_running_once()
+            except Exception as e:
+                # 전체 루프 에러는 잡고 로그만 남긴 뒤 다음 주기로 넘어감
+                logger.exception("Error in VM polling loop: %s", e)
+            # 지정한 시간만큼 대기
+            await asyncio.sleep(interval_sec)
+
+    async def poll_vm_status(
+        self,
+        vm_project_id: ObjectId,
+        token: str | None = None,  # ← 토큰을 선택적으로 받도록 변경
+    ) -> dict:
+        doc = await self.dao.get(vm_project_id)
+        if not doc:
+            raise HTTPException(404, "vm_project not found")
+
+        job_id = doc.get("vm_job_id")
+        if not job_id:
+            raise HTTPException(400, "vm_job_id is empty")
+
+        # 🔽 여기서 토큰이 없으면 한 번만 발급
+        if token is None:
+            token = await self._vm_issue_token()
+
+        base = str(settings.VM_API_URL).rstrip("/")
+        url = base + str(settings.VM_GET_JOB_DETAIL_PATH).format(macsim_id=job_id)
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                r = await client.get(url, headers=headers)
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                msg = getattr(e.response, "text", str(e))
+                # 폴링 실패 → status는 유지, 에러 메시지만 기록
+                await self.dao.set_vm_poll_result(
+                    vm_project_id,
+                    status=doc.get("status", "running"),
+                    vm_state=doc.get("vm_raw_status"),  # 이전 state 유지
+                    vm_error_message=f"VM poll error: {msg}",
+                )
+                raise HTTPException(502, detail=f"VM poll error: {msg}")
+
+        vm_resp = self._safe_json(r)
+        vm_state = self._extract_state(vm_resp)
+
+        # VM state → 우리 status 맵핑
+        if vm_state in ("WAIT", "RUNNING"):
+            new_status = "running"
+        elif vm_state in ("FINISH", "COMPLETED", "SUCCESS"):
+            new_status = "completed"
+        elif vm_state in ("ERROR", "FAILED", "CANCELED"):
+            new_status = "failed"
+        else:
+            new_status = "running"  # 모르는 값이면 일단 running 유지
+
+        await self.dao.set_vm_poll_result(
+            vm_project_id,
+            status=new_status,
+            vm_state=vm_state,
+            vm_error_message=None,
+        )
+
+        return {
+            "vm_project_id": str(vm_project_id),
+            "status": new_status,  # 내부 상태
+            "vm_state": vm_state,  # VM에서 온 state
+            "vm_job_id": str(job_id),
+        }

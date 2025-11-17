@@ -29,9 +29,17 @@ STOCK_CODE_BY_NAME: dict[str, int] = {
     item["name"]: item["code"] for item in STOCK_ITEMS
 }
 
+KNOWN_STOCK_CODES: set[int] = {int(item["code"]) for item in STOCK_ITEMS}
+
 
 def lookup_stock_code(name: str | None) -> int | None:
     if not name:
         return None
     # 절대 strip/소문자화/정규화 하지 않는다
     return STOCK_CODE_BY_NAME.get(name)
+
+
+def is_known_stock_code(code: int | None) -> bool:
+    if code is None:
+        return False
+    return code in KNOWN_STOCK_CODES

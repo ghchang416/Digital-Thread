@@ -64,3 +64,11 @@ class VmFileDAO:
 
     async def get(self, _id: ObjectId) -> Optional[dict]:
         return await self.col.find_one({"_id": _id})
+
+    async def update_gridfs_pointer(
+        self, vm_file_id: ObjectId, new_gridfs_id: ObjectId
+    ) -> None:
+        await self.col.update_one(
+            {"_id": vm_file_id},
+            {"$set": {"gridfs_id": new_gridfs_id, "updated_at": _now_iso()}},
+        )

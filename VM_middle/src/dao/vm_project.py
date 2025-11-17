@@ -1,6 +1,6 @@
 # src/dao/vm_project.py
 from __future__ import annotations
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorCollection
@@ -42,12 +42,16 @@ class VmProjectDAO:
             "aid": aid,
             "eid": eid,
             "wpid": wpid,
-            # 생성 시점에선 곧바로 검증해서 needs-fix/ready 로 덮일 예정
-            "status": "ready",
+            "status": "ready",  # 이후 validation으로 ready/needs-fix 덮임
             "latest_files": {},
             "project_file_draft": project_file_draft or {},
             "proj_name": proj_name,
             "validation": {"is_valid": None, "errors": [], "updated_at": _now_iso()},
+            # 👇 VM 시스템 연동용 필드들 (나열형, 최소 정보만)
+            "vm_job_id": None,
+            "vm_last_polled_at": None,
+            "vm_error_message": None,
+            "vm_raw_status": None,  # 선택: 디버그용
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
         }
@@ -120,10 +124,16 @@ class VmProjectDAO:
             "aid": aid,
             "eid": eid,
             "wpid": wpid,
-            "status": "ready",  # 곧바로 검증으로 덮임
+            "status": "ready",  # 이후 validation으로 ready/needs-fix 덮임
             "latest_files": {},
-            "project_file_draft": project_file_draft,
+            "project_file_draft": project_file_draft or {},
+            "proj_name": None,
             "validation": {"is_valid": None, "errors": [], "updated_at": _now_iso()},
+            # 👇 VM 시스템 연동용 필드들 (나열형, 최소 정보만)
+            "vm_job_id": None,
+            "vm_last_polled_at": None,
+            "vm_error_message": None,
+            "vm_raw_status": None,  # 선택: 디버그용
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
         }
@@ -172,3 +182,112 @@ class VmProjectDAO:
         cursor = self.col.find(filt).sort(sort).skip(skip).limit(size)
         items = await cursor.to_list(length=size)
         return items, total
+
+    async def set_vm_job_id(self, vm_project_id: ObjectId, job_id: str) -> None:
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {
+                "$set": {
+                    "vm_job_id": job_id,
+                    "vm_last_polled_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+
+    async def update_vm_poll_info(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        vm_raw_status: str | None = None,
+        vm_error_message: str | None = None,
+        project_status: str | None = None,  # completed / failed / running 등
+    ) -> None:
+        update: dict = {
+            "vm_last_polled_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        if vm_raw_status is not None:
+            update["vm_raw_status"] = vm_raw_status
+        if vm_error_message is not None:
+            update["vm_error_message"] = vm_error_message
+        if project_status is not None:
+            update["status"] = project_status
+
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {"$set": update},
+        )
+
+    async def set_vm_job_started(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        vm_job_id: str,
+        vm_state: str | None,
+    ) -> None:
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {
+                "$set": {
+                    "status": "running",
+                    "vm_job_id": vm_job_id,
+                    "vm_last_polled_at": _now_iso(),
+                    "vm_error_message": None,
+                    "vm_raw_status": vm_state,  # ← 응답의 state만 저장
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+
+    async def set_vm_error(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        message: str,
+        vm_raw_status: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # 상태는 그대로 두되(ready 유지), 에러 메시지만 기록
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {
+                "$set": {
+                    "vm_error_message": message,
+                    "vm_raw_status": vm_raw_status or {},
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+
+    async def set_vm_poll_result(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        status: str,  # "running" | "completed" | "failed"
+        vm_state: str | None,
+        vm_error_message: str | None,
+    ) -> None:
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {
+                "$set": {
+                    "status": status,
+                    "vm_last_polled_at": _now_iso(),
+                    "vm_error_message": vm_error_message,
+                    "vm_raw_status": vm_state,  # ← 마지막으로 받은 state만 저장
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+
+    async def list_running_ids(self) -> list[ObjectId]:
+        """
+        status='running' 인 vm_project 의 _id 목록만 반환
+        """
+        cursor = self.col.find({"status": "running"}, {"_id": 1})
+        ids: list[ObjectId] = []
+        async for doc in cursor:
+            _id = doc.get("_id")
+            if isinstance(_id, ObjectId):
+                ids.append(_id)
+        return ids

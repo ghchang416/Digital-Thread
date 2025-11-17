@@ -74,6 +74,15 @@ async def get_vm_project_detail(
     return await svc.get_detail(ObjectId(vm_project_id))
 
 
+@router.post("/{vm_project_id}/start-vm")
+async def start_vm(
+    vm_project_id: str,
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    vm_project_id = ObjectId(vm_project_id)
+    return await svc.start_vm_job(vm_project_id)
+
+
 @router.post("/from-iso/preview", response_model=PreviewFromIsoOut)
 async def preview_from_iso(
     body: VmProjectCreateIn,
@@ -96,37 +105,41 @@ async def preview_from_iso(
         raise HTTPException(status_code=502, detail=f"ISO 조회/stock 계산 실패: {e}")
 
 
-@router.get("/{id}/project-file", response_model=ProjectFileOut)
+@router.get("/{vm_project_id}/project-file", response_model=ProjectFileOut)
 async def get_project_file(
-    id: str = Path(..., description="vm_project _id"),
+    vm_project_id: str = Path(..., description="vm_project _id"),
+    is_file: str = Query("false", description="파일 기반 조회 여부 (true/false)"),
     svc: VmProjectService = Depends(get_vm_project_service),
 ):
     try:
-        return await svc.get_project_file(ObjectId(id))
+        if is_file.lower() == "true":
+            return await svc.get_project_file(ObjectId(vm_project_id), source="file")
+        else:
+            return await svc.get_project_file(ObjectId(vm_project_id))
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"프로젝트 파일 조회 실패: {e}")
 
 
-@router.patch("/{id}/project-file/stock", response_model=ProjectFileOut)
+@router.patch("/{vm_project_id}/project-file/stock", response_model=ProjectFileOut)
 async def patch_stock(
     body: StockPatchIn,
-    id: str = Path(...),
+    vm_project_id: str = Path(...),
     svc: VmProjectService = Depends(get_vm_project_service),
 ):
     try:
-        return await svc.patch_stock(ObjectId(id), body)
+        return await svc.patch_stock(ObjectId(vm_project_id), body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock 수정 실패: {e}")
 
 
-@router.patch("/{id}/project-file/process", response_model=ProjectFileOut)
+@router.patch("/{vm_project_id}/project-file/process", response_model=ProjectFileOut)
 async def patch_process(
     body: ProcessPatchIn,
-    id: str = Path(...),
+    vm_project_id: str = Path(...),
     svc: VmProjectService = Depends(get_vm_project_service),
 ):
     try:
-        return await svc.patch_process(ObjectId(id), body)
+        return await svc.patch_process(ObjectId(vm_project_id), body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"process 수정 실패: {e}")
 

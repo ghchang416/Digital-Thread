@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     VM_API_URL: AnyHttpUrl = "https://api.unicncsolutions.com"
     VM_USERNAME: str = "vajura86@kitech.re.kr"
     VM_PASSWORD: str = "tkQhdtka*6"
+    VM_S3_UPLOAD_DETAIL: str = "/s3-upload"
+    VM_LOGIN_TOKEN: str = "/api/v1/auths/login/access-token"
+    VM_JOB_CREATE: str = "/api/v1/macsim"
+    VM_GET_JOB_DETAIL_PATH: str = "/api/v1/macsim/{macsim_id}"
 
     POLL_INTERVAL_SEC: int = 20
     POLL_TIMEOUT_SEC: int = 7200

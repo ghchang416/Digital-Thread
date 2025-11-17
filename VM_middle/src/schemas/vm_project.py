@@ -173,6 +173,11 @@ class VmProjectDetailOut(BaseModel):
     validation_is_valid: Optional[bool] = None
     validation_errors: list[str] = Field(default_factory=list)
 
+    vm_job_id: str | None = None
+    vm_last_polled_at: str | None = None
+    vm_error_message: str | None = None
+    vm_raw_status: str | None = None
+
     # 초안 프로젝트 파일(실행 전 편집본)
     project_file_draft: ProjectFileOut
 
