@@ -303,6 +303,30 @@ async def delete_asset_by_keys(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
+@router.post(
+    "/nc",
+    response_model=AssetCreateResponse,
+    summary="NC dt_file 자동 생성 (NC 파일 업로드)",
+)
+async def create_nc_dt_file_api(
+    global_asset_id: str,
+    asset_id: str,  # project_asset_id
+    element_id: str,  # project_element_id
+    workplan_id: str,
+    file: UploadFile = File(...),
+    asset_service: AssetService = Depends(get_asset_service),
+    file_service: FileService = Depends(get_file_service),
+):
+    return await asset_service.create_nc_dt_file_from_upload(
+        global_asset_id=global_asset_id,
+        project_asset_id=asset_id,
+        project_element_id=element_id,
+        workplan_id=workplan_id,
+        file=file,
+        file_service=file_service,
+    )
+
+
 @router.get("/extract", response_class=PlainTextResponse, summary="자산 병합 뷰")
 async def extract_assets(
     global_asset_id: str = Query(..., description="필수: 글로벌 자산 ID"),

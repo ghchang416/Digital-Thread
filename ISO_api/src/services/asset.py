@@ -33,6 +33,7 @@ from src.utils.v3_xml_parser import (
     workplan_exists_in_project_xml,
     extract_file_reference_tuple,
     workingstep_exists_in_project_xml,
+    build_nc_dt_file_xml,
 )
 from src.utils.env import get_env_or_default
 from src.utils.exceptions import CustomException, ExceptionEnum
@@ -1171,3 +1172,62 @@ class AssetService:
                 ExceptionEnum.INVALID_ATTRIBUTE,
                 f"display_name mismatch: XML='{display_name}', uploaded='{uploaded_filename}'",
             )
+
+    async def create_nc_dt_file_from_upload(
+        self,
+        *,
+        global_asset_id: str,  # 프로젝트 dt_asset_global_id (URL or ID)
+        project_asset_id: str,  # 프로젝트 asset_id (예: prj_011)
+        project_element_id: str,  # dt_project element_id (예: milling_prj)
+        workplan_id: str,  # workplan its_id (예: wp_001)
+        file: UploadFile,
+        file_service: FileService,
+    ) -> AssetCreateResponse:
+        """
+        NC 파일 업로드 → 해당 프로젝트/워크플랜을 참조하는 NC dt_file dt_asset를 자동 생성해 저장.
+
+        1) 프로젝트 + 워크플랜 존재 여부 확인 (find_nc_files_by_project_ref 내부에서 수행)
+        2) 이미 동일 워크플랜을 참조하는 NC dt_file 이 있으면 400 (INVALID_ATTRIBUTE)
+        3) 파일을 GridFS(FileService) 에 저장 → OID
+        4) NC dt_file 전용 dt_asset XML 생성 (build_nc_dt_file_xml)
+        5) AssetRepository 에 insert
+        """
+
+        # 1 + 2. 프로젝트/워크플랜 존재 확인 + NC 중복 체크
+        #    - find_nc_files_by_project_ref: 존재 안 하면 NO_DATA_FOUND 던짐
+        #    - NC dt_file 있으면 리스트 길이 > 0
+        nc_files = await self.find_nc_files_by_project_ref(
+            global_asset_id=global_asset_id,
+            asset_id=project_asset_id,
+            project_element_id=project_element_id,
+            workplan_id=workplan_id,
+            validate_project_exists=True,
+        )
+
+        if nc_files:
+            # 이미 같은 프로젝트/워크플랜을 참조하는 NC dt_file 존재
+            raise CustomException(
+                ExceptionEnum.INVALID_ATTRIBUTE,
+                detail="해당 워크플랜을 참조하는 NC dt_file 이 이미 존재합니다.",
+            )
+
+        # 3. 파일을 GridFS 에 저장 → OID
+        file_oid = await file_service.process_upload(file=file)
+
+        # 4. NC dt_file 전용 dt_asset XML 생성
+        #    - global_asset_id는 내부 규칙에 따라 URI로 정규화해서 쓰는 게 안전
+        norm_gid = self._normalize_global_asset_id(global_asset_id)
+
+        nc_xml = build_nc_dt_file_xml(
+            nc_global_asset_id=norm_gid,
+            project_asset_id=project_asset_id,
+            project_element_id=project_element_id,
+            workplan_id=workplan_id,
+            file_oid=str(file_oid),
+            file_name=file.filename or "nc_program.tap",
+        )
+
+        # 5. AssetRepository 를 통해 MongoDB 에 저장
+        req = AssetCreateRequest(xml=nc_xml)
+        resp = await self.repo.insert_asset(req)
+        return resp

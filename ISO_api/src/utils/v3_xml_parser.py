@@ -2014,3 +2014,98 @@ def count_workingsteps_in_workplan_xml(
             continue
 
     return cnt
+
+
+def generate_nc_ids(project_asset_id: str, workplan_id: str) -> tuple[str, str]:
+    """
+    프로젝트 asset_id, workplan_id 를 기반으로
+    - NC dt_asset 의 id
+    - NC dt_file 의 element_id
+    를 자동 생성한다.
+    예:
+      project_asset_id = "prj_011" → nc_asset_id = "nc_prj_011"
+      workplan_id      = "wp_001"  → nc_element_id = "nc_wp_001"
+    """
+
+    def _sanitize(s: str) -> str:
+        # 공백/양끝 제거 + XML id에 애매한 문자들은 '_' 로 치환
+        s = (s or "").strip()
+        return re.sub(r"[^\w\-]+", "_", s)
+
+    proj_id_clean = _sanitize(project_asset_id)
+    wp_id_clean = _sanitize(workplan_id)
+
+    nc_asset_id = f"nc_{proj_id_clean}"
+    nc_element_id = f"nc_{wp_id_clean}"
+
+    return nc_asset_id, nc_element_id
+
+
+def build_nc_dt_file_xml(
+    *,
+    # 새로 만들 NC dt_asset 쪽 메타
+    nc_global_asset_id: str,  # 프로젝트와 동일
+    project_asset_id: str,  # prj_011
+    project_element_id: str,  # milling_prj
+    workplan_id: str,  # wp_001
+    file_oid: str,  # GridFS OID (24 hex)
+    file_name: str,  # display_name 에 들어갈 실제 파일명
+) -> str:
+    """
+    신규 NC dt_file dt_asset XML을 생성한다.
+    - asset_global_id: 프로젝트와 동일
+    - id / element_id: generate_nc_ids 규칙 사용
+    - reference: DT_GLOBAL_ASSET / DT_ASSET / DT_PROJECT / WORKPLAN 채움
+    - value: GridFS OID
+    """
+    nc_asset_id, nc_element_id = generate_nc_ids(project_asset_id, workplan_id)
+
+    # dt_asset 루트 dict (ensure_* 유틸로 네임스페이스/버전 보정)
+    dt_asset_root = {
+        "asset_global_id": nc_global_asset_id,
+        "id": nc_asset_id,
+        "asset_kind": "instance",
+        "dt_elements": {
+            "@xsi:type": "dt_file",
+            "element_id": nc_element_id,
+            "category": "NC",
+            "display_name": file_name,
+            "element_description": "NC program file.",
+            "content_type": "text/x-gcode",
+            "value": file_oid,
+            "path": "",
+            "reference": {
+                # 예시 XML에서도 element_id 는 비워져 있어서 그대로 빈값 유지
+                "element_id": "",
+                "keys": [
+                    {
+                        "key": "DT_GLOBAL_ASSET",
+                        "value": nc_global_asset_id,
+                    },
+                    {
+                        "key": "DT_ASSET",
+                        "value": project_asset_id,
+                    },
+                    {
+                        "key": "DT_PROJECT",
+                        "value": project_element_id,
+                    },
+                    {
+                        "key": "WORKPLAN",
+                        "value": workplan_id,
+                    },
+                ],
+            },
+        },
+    }
+
+    # 네임스페이스 / schemaVersion 보정 (이 파일에 이미 있는 유틸 재사용)
+    ensure_dtasset_namespaces(dt_asset_root)
+    ensure_schema_version(dt_asset_root, None)
+
+    xml = xmltodict.unparse({"dt_asset": dt_asset_root}, pretty=True, attr_prefix="@")
+
+    # xsdata DtAsset 스키마로 최종 검증
+    validate_dtasset_or_raise(xml)
+
+    return xml
