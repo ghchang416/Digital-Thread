@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
-from src.clients.iso import list_projects_by_gid, list_projects
+from src.clients.iso import list_projects_with_summary
 from src.schemas.iso import ProjectRow, ProjectListResp  # ProjectRow: gid/aid/eid 필수
 
 router = APIRouter(prefix="/iso-projects", tags=["iso"])
@@ -26,9 +26,9 @@ async def get_projects(
     """
     try:
         raw = await (
-            list_projects_by_gid(gid)
+            list_projects_with_summary(gid)
             if gid
-            else list_projects(gid=None, gid_limit=gid_limit)
+            else list_projects_with_summary(gid=None, gid_limit=gid_limit)
         )
     except Exception as e:
         # upstream 문제를 502로 래핑
@@ -53,6 +53,15 @@ async def get_projects(
             missing_count += 1
             continue
 
+        # workplan_ids / wpid 둘 중 무엇이든 받아주기
+        workplan_ids = (
+            r.get("workplan_ids")
+            if isinstance(r.get("workplan_ids"), list)
+            else r.get("wpid")
+        )
+        if not isinstance(workplan_ids, list):
+            workplan_ids = []
+
         items.append(
             ProjectRow(
                 gid=gid_v,
@@ -60,10 +69,15 @@ async def get_projects(
                 eid=eid_v,
                 name=r.get("name") or r.get("display_name") or r.get("title"),
                 type=r.get("type"),
+                description=r.get("description"),
+                main_wpid=r.get("main_wpid"),
+                wpid=workplan_ids,
             )
         )
 
-    # (선택) 일부가 스킵됐다면 경고 헤더를 달 수도 있지만 여기선 본문만 반환
     return ProjectListResp(
-        items=items, has_more=has_more, next_offset=next_offset, total=total
+        items=items,
+        has_more=has_more,
+        next_offset=next_offset,
+        total=total,
     )

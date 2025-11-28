@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.core.config import settings
 from src.clients.http import HttpClient
 
+from src.utils.xml_parser import extract_project_summary
+
 _iso = HttpClient(
     settings.ISO_API_URL,
     timeout=settings.HTTP_TIMEOUT_SEC,
@@ -182,3 +184,51 @@ async def get_asset_detail(
     path = settings.ISO_PATH_ASSET_DETAIL.format(element_id=eid)
     params = {"global_asset_id": gid, "asset_id": aid, "type": type}
     return await _iso.get_json(path, params=params)
+
+
+async def list_projects_with_summary(
+    gid: Optional[str] = None,
+    *,
+    gid_limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    list_projects()에서 받은 (gid, aid, eid) 목록에
+    dt_project XML을 붙여서 summary까지 생성한 확장된 리스트.
+    """
+    rows = await list_projects(gid=gid, gid_limit=gid_limit)
+
+    enriched = []
+
+    for r in rows:
+        gid_v = r["gid"]
+        aid_v = r["aid"]
+        eid_v = r["eid"]
+
+        try:
+            # 1) dt_project XML detail 호출
+            detail = await get_project_detail(
+                eid=eid_v,
+                gid=gid_v,
+                aid=aid_v,
+            )
+            xml_text = detail.get("data") or ""
+        except Exception:
+            # detail 불러오기 실패 → fallback
+            enriched.append({**r})
+            continue
+
+        # 2) XML에서 summary 추출
+        summary = extract_project_summary(xml_text)
+
+        # 3) row에 병합
+        enriched.append(
+            {
+                **r,
+                "description": summary.get("description"),
+                "name": summary.get("name") or r.get("name"),
+                "main_wpid": summary.get("main_wpid"),
+                "workplan_ids": summary.get("workplan_ids"),
+            }
+        )
+
+    return enriched

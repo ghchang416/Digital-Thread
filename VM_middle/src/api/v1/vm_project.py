@@ -83,26 +83,26 @@ async def start_vm(
     return await svc.start_vm_job(vm_project_id)
 
 
-@router.post("/from-iso/preview", response_model=PreviewFromIsoOut)
-async def preview_from_iso(
-    body: VmProjectCreateIn,
-    svc: VmProjectService = Depends(get_vm_project_service),
-):
-    """
-    DB에 저장하지 않고 stock/project_file만 리턴하는 미리보기.
-    - stock: material 기반 자동 계산
-    - process: (지정 workplan 또는 main) 워킹스텝 순서대로,
-               NC 분할 기반 file_path/output_dir_path + tool_data 채움
-    """
-    try:
-        stock, project_file, _debug = await svc.preview_from_iso_with_nc(body)
-        return PreviewFromIsoOut(stock=stock, project_file=project_file)
+# @router.post("/from-iso/preview", response_model=PreviewFromIsoOut)
+# async def preview_from_iso(
+#     body: VmProjectCreateIn,
+#     svc: VmProjectService = Depends(get_vm_project_service),
+# ):
+#     """
+#     DB에 저장하지 않고 stock/project_file만 리턴하는 미리보기.
+#     - stock: material 기반 자동 계산
+#     - process: (지정 workplan 또는 main) 워킹스텝 순서대로,
+#                NC 분할 기반 file_path/output_dir_path + tool_data 채움
+#     """
+#     try:
+#         stock, project_file, _debug = await svc.preview_from_iso_with_nc(body)
+#         return PreviewFromIsoOut(stock=stock, project_file=project_file)
 
-    except HTTPException:
-        # svc 내부에서 404(워크플랜 없음) 등을 일으킨 경우 그대로 전달
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ISO 조회/stock 계산 실패: {e}")
+#     except HTTPException:
+#         # svc 내부에서 404(워크플랜 없음) 등을 일으킨 경우 그대로 전달
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=502, detail=f"ISO 조회/stock 계산 실패: {e}")
 
 
 @router.get("/{vm_project_id}/project-file", response_model=ProjectFileOut)
@@ -144,11 +144,11 @@ async def patch_process(
         raise HTTPException(status_code=400, detail=f"process 수정 실패: {e}")
 
 
-@router.post("/debug/material")
-async def debug_material(
-    body: VmProjectCreateIn, svc: VmProjectService = Depends(get_vm_project_service)
-):
-    try:
-        return await svc.debug_iso_material(body)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"debug failed: {e}")
+# @router.post("/debug/material")
+# async def debug_material(
+#     body: VmProjectCreateIn, svc: VmProjectService = Depends(get_vm_project_service)
+# ):
+#     try:
+#         return await svc.debug_iso_material(body)
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"debug failed: {e}")

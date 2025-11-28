@@ -547,3 +547,107 @@ def make_vm_dt_file_xml(
 </dt_asset>
 """
     return xml
+
+
+def extract_project_summary(project_xml: str) -> Dict[str, Any]:
+    """
+    dt_project XML에서 프로젝트 요약 정보 추출.
+
+    반환 예:
+    {
+        "description": "KIMM dt_project.",   # element_description 또는 display_name
+        "main_wpid": "wp_001",               # main_workplan/its_id
+        "workplan_ids": ["wp_001", "wp_002", "wp_003"],  # 메인 + 자식/형제 workplan its_id
+    }
+    """
+    out = {
+        "description": None,
+        "main_wpid": None,
+        "workplan_ids": [],
+    }
+
+    if not project_xml or not isinstance(project_xml, str):
+        return out
+
+    # 기존 parse 스타일 그대로 사용
+    doc = xmltodict.parse(
+        project_xml,
+        process_namespaces=True,
+        namespaces={
+            "http://digital-thread.re/dt_asset": None,
+            "http://www.w3.org/2001/XMLSchema-instance": "xsi",
+        },
+        attr_prefix="@",
+        cdata_key="#text",
+    )
+
+    dt_asset = _get_by_local(doc, "dt_asset") or doc
+    root_elems = _get_by_local(dt_asset, "dt_elements")
+    items = root_elems if isinstance(root_elems, list) else [root_elems]
+
+    # 1) dt_project 요소 찾기
+    dt_proj = None
+    for e in items:
+        if (
+            isinstance(e, dict)
+            and _xsi_local(e.get("@xsi:type") or e.get("xsi:type")) == "dt_project"
+        ):
+            dt_proj = e
+            break
+
+    if not isinstance(dt_proj, dict):
+        return out
+
+    # 2) description: element_description 우선, 없으면 display_name
+    desc = _get_by_local(dt_proj, "element_description")
+    if not isinstance(desc, str) or not desc.strip():
+        desc = _get_by_local(dt_proj, "display_name")
+
+    if isinstance(desc, str):
+        out["description"] = desc.strip() or None
+
+    # 3) main_workplan / its_id
+    main_wp = _get_by_local(dt_proj, "main_workplan")
+    main_wpid = None
+    workplan_ids: list[str] = []
+
+    if isinstance(main_wp, dict):
+        main_wpid = _get_by_local(main_wp, "its_id")
+        if isinstance(main_wpid, str) and main_wpid.strip():
+            main_wpid = main_wpid.strip()
+            workplan_ids.append(main_wpid)
+
+        # 3-1) main_workplan 아래 자식 workplan(its_elements[xsi:type="workplan"])
+        children = _as_list(_get_by_local(main_wp, "its_elements"))
+        for ch in children:
+            if not isinstance(ch, dict):
+                continue
+            if _xsi_local(ch.get("@xsi:type") or ch.get("xsi:type")) != "workplan":
+                continue
+            cid = _get_by_local(ch, "its_id")
+            if isinstance(cid, str) and cid.strip():
+                workplan_ids.append(cid.strip())
+
+    # 3-2) dt_project 바로 아래 형제 workplan (예: <dt_elements xsi:type="workplan">)
+    siblings = _as_list(_get_by_local(dt_proj, "its_elements"))
+    for s in siblings:
+        if not isinstance(s, dict):
+            continue
+        if _xsi_local(s.get("@xsi:type") or s.get("xsi:type")) != "workplan":
+            continue
+        sid = _get_by_local(s, "its_id")
+        if isinstance(sid, str) and sid.strip():
+            workplan_ids.append(sid.strip())
+
+    # 중복 제거 (순서 유지)
+    seen = set()
+    unique_ids: list[str] = []
+    for wid in workplan_ids:
+        if wid in seen:
+            continue
+        seen.add(wid)
+        unique_ids.append(wid)
+
+    out["main_wpid"] = main_wpid
+    out["workplan_ids"] = unique_ids
+    return out

@@ -321,7 +321,8 @@ class VmProjectService:
                 },
             )
 
-        doc = await self.dao.get(_id)
+        # 🔽 상태 체크 (ready / needs-fix만 허용)
+        doc = await self._ensure_editable_status(_id)
         pf = (doc or {}).get("project_file_draft") or {}
 
         # --- DB 초안: stock 필드만 교체 ---
@@ -358,7 +359,8 @@ class VmProjectService:
     async def patch_process(
         self, _id: ObjectId, patch: ProcessPatchIn
     ) -> ProjectFileOut:
-        doc = await self.dao.get(_id)
+        # 🔽 상태 체크 (ready / needs-fix만 허용)
+        doc = await self._ensure_editable_status(_id)
         pf = (doc or {}).get("project_file_draft") or {}
 
         # --- DB 초안: process 필드만 교체 ---
@@ -388,6 +390,32 @@ class VmProjectService:
             next_status_if_invalid="needs-fix",
         )
         return pf_model
+
+    async def _ensure_editable_status(self, _id: ObjectId) -> dict:
+        """
+        stock / process 수정이 가능한 상태인지 검사.
+        - 허용: status == 'ready' 또는 'needs-fix'
+        - 그 외: 400 에러
+        """
+        doc = await self.dao.get(_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="vm_project not found")
+
+        status = (doc.get("status") or "").strip()
+
+        if status not in ("ready", "needs-fix"):
+            # completed / running / failed / draft 등은 수정 불가
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": (
+                        "stock/process 수정은 status가 'ready' 또는 'needs-fix'일 때만 가능합니다."
+                    ),
+                    "status": status,
+                },
+            )
+
+        return doc
 
     # ---------------- 라우터용 미리보기(빈 process) ----------------
     async def preview_from_iso(
