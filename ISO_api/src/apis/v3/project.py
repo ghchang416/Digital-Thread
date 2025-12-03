@@ -300,7 +300,7 @@ async def apply_cam_into_workplan(
                 status_code=422, detail="NX expects exactly one CAM JSON file."
             )
         cam_json = await read_json_file(cam_files[0])
-        all_ops = pick_nx_ops("nx", cam_json)  # 한 파일 안에 여러 op
+        all_ops = pick_nx_ops(cam_json)  # 한 파일 안에 여러 op
         ordered_names = [cam_files[0].filename or ""]
     elif ct in ("powermill", "pmill", "power_mill"):
         if not ops_order:

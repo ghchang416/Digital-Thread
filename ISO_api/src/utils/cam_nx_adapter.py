@@ -6,9 +6,23 @@ __all__ = ["pick_nx_ops"]
 
 def pick_nx_ops(cam_json: Any) -> List[Dict[str, Any]]:
     """
-    NX 계열: cam_json 안에서 operation/steps 리스트를 찾아 반환.
-    실제 NX 샘플 구조를 반영해 흔한 키를 우선 탐색.
+    NX CAM JSON 구조:
+    {
+      "key": {...},
+      "values": [ {...}, {...}, ... ]
+    }
+    → values가 operation 리스트이다.
+
+    기존 NX 구버전 JSON도 호환되도록 fallback 로직도 유지.
     """
+
+    # 1) NX 최신 구조: values가 실제 operation 리스트
+    if isinstance(cam_json, dict):
+        v = cam_json.get("values")
+        if isinstance(v, list):
+            return v
+
+    # 2) 기존 로직 그대로 유지 (구버전 호환)
     if isinstance(cam_json, list):
         return cam_json
     if not isinstance(cam_json, dict):
@@ -19,5 +33,5 @@ def pick_nx_ops(cam_json: Any) -> List[Dict[str, Any]]:
         if isinstance(v, list):
             return v
 
-    # 못 찾으면 단일 op로 간주
+    # 3) 못 찾으면 단일 op로 처리
     return [cam_json]

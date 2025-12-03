@@ -2,10 +2,12 @@
 import re
 from typing import Dict, Any, List, Optional
 from collections import OrderedDict
+
+import xmltodict
+
 from src.utils.cam_nx_adapter import pick_nx_ops
 from src.utils.cam_powermill_adapter import pick_powermill_ops
 from src.utils.v3_xml_parser import get_nested_value
-import xmltodict
 
 __all__ = [
     "F14649_TO_13399",
@@ -221,7 +223,7 @@ def ensure_feedrate_reference(
 
 
 def derive_tool_element_id_from_mapping(
-    cam_op: Dict[str, any],
+    cam_op: Dict[str, Any],
     cam_to_14649_map: Dict[str, str],
     fallback_elem_id: str,
 ) -> str:
@@ -292,9 +294,11 @@ def derive_tool_display_name_from_mapping(
         return fallback_display
 
     # 기존에 쓰던 get_nested_value 재사용
-    from src.utils.v3_xml_parser import get_nested_value  # 위치는 프로젝트 구조에 맞게
+    from src.utils.v3_xml_parser import (
+        get_nested_value as _get_nested_value,
+    )  # 로컬 alias
 
-    raw = get_nested_value(cam_op, source_cam_key.split("."))
+    raw = _get_nested_value(cam_op, source_cam_key.split("."))
     if raw is None:
         return fallback_display
 
@@ -517,6 +521,86 @@ def find_cam_key_for_coolant(cam_to_14649_map: dict) -> str | None:
     return None
 
 
+def ensure_dummy_milling_tolerances(ws_node: Dict[str, Any]) -> None:
+    """
+    its_operation.its_machining_strategy.its_milling_tolerances(tolerances) 블록을 보강한다.
+
+    - tolerances 블록이 없으면 dict 생성
+    - chordal_tolerance, scallop_height 는 스키마 상 required=True 이므로,
+      CAM 매핑에서 값이 없더라도 최소한 빈 요소로 생성되도록 "" 기본값을 채운다.
+    """
+    if not isinstance(ws_node, dict):
+        return
+
+    op = ws_node.setdefault("its_operation", {})
+    strat = op.setdefault("its_machining_strategy", {})
+    tol = strat.get("its_milling_tolerances")
+
+    if not isinstance(tol, dict):
+        tol = {}
+        strat["its_milling_tolerances"] = tol
+
+    # required=True 필드들에 대해 최소한 빈 요소 보장
+    tol.setdefault("chordal_tolerance", "")
+    tol.setdefault("scallop_height", "")
+
+
+def _maybe_upgrade_2p5d_operation_and_strategy_type(
+    ws_node: dict,
+    cam_to_14649_map: dict,
+) -> None:
+    """
+    2.5D 계열에서:
+    - operation: two5D_milling_operation → bottom_and_side_milling
+      (매핑 경로에 BottomAndSideMilling 이 쓰인 경우)
+    - strategy: two5D_milling_strategy → unidirectional
+      (매핑 경로에 Two5DMillingStrategy.Unidirectional 이 쓰인 경우)
+
+    Powermill / NX 공용:
+    - 매핑에 해당 서브타입이 전혀 없으면 아무 것도 하지 않는다.
+    """
+
+    if not isinstance(ws_node, dict):
+        return
+
+    op = ws_node.get("its_operation")
+    if not isinstance(op, dict):
+        return
+
+    # ------------------------------------------------------------------
+    # 1) operation 타입 업그레이드: two5D_milling_operation → bottom_and_side_milling
+    # ------------------------------------------------------------------
+    uses_bottom_and_side = any(
+        "BottomAndSideMilling" in path for path in cam_to_14649_map.values()
+    )
+    if uses_bottom_and_side:
+        op_type = op.get("@xsi:type")
+        # 베이스 타입(또는 미지정)인 경우에만 업그레이드
+        if op_type in (None, "", "two5D_milling_operation", "machining_operation"):
+            op["@xsi:type"] = "bottom_and_side_milling"
+
+    # ------------------------------------------------------------------
+    # 2) strategy 타입 업그레이드: two5D_milling_strategy → unidirectional
+    # ------------------------------------------------------------------
+    strat = op.get("its_machining_strategy")
+    if not isinstance(strat, dict):
+        return
+
+    uses_unidirectional = any(
+        "Two5DMillingStrategy.Unidirectional" in path or "Unidirectional." in path
+        for path in cam_to_14649_map.values()
+    )
+    if not uses_unidirectional:
+        return
+
+    strat_type = strat.get("@xsi:type")
+    # generic 타입(또는 미지정)인 경우에만 업그레이드
+    if strat_type in (None, "", "two5D_milling_strategy", "milling_strategy"):
+        strat["@xsi:type"] = "unidirectional"
+        # 🔥 Unidirectional 에는 pathmode 필드가 없으므로, 혹시 들어가 있으면 제거
+        strat.pop("pathmode", None)
+
+
 def ensure_strategy_with_pathmode(
     ws_node: dict,
     cam_op: dict,
@@ -526,8 +610,15 @@ def ensure_strategy_with_pathmode(
     """
     its_machining_strategy 내에 pathmode를 보장하고,
     pathmode가 cutmode보다 먼저 직렬화되도록 키 순서를 정리한다.
-    - CAM 매핑에 FreeformStrategy.pathmode가 있으면 CAM 값을 우선 사용
-    - 없거나 빈 값이면 default("forward") 사용
+
+    - FreeformStrategy + pathmode 를 쓰는 케이스(주로 PowerMILL)에서는
+      CAM 매핑에 FreeformStrategy.pathmode가 있으면 CAM 값을 우선 사용,
+      없거나 빈 값이면 default("forward") 사용.
+
+    - Two5DMillingStrategy.Unidirectional (NX 2.5D 일방향 전략) 의 경우:
+      Unidirectional 클래스에는 pathmode 필드가 없으므로 pathmode를 생성하지 않는다.
+      대신 cutmode / its_milling_tolerances / stepover 순서만 정리하고,
+      tolerances 블록에 chordal_tolerance / scallop_height 를 최소한 빈 값으로라도 채워준다.
     """
     if not isinstance(ws_node, dict):
         return
@@ -537,6 +628,42 @@ def ensure_strategy_with_pathmode(
     if not isinstance(strat, dict):
         strat = {}
         op["its_machining_strategy"] = strat
+
+    # 🔎 이 작업이 Unidirectional 기반인지 먼저 확인
+    is_unidirectional = any(
+        "Two5DMillingStrategy.Unidirectional" in path or "Unidirectional." in path
+        for path in cam_to_14649_map.values()
+    )
+
+    if is_unidirectional:
+        # ▶ Unidirectional 은 pathmode 필드가 스키마에 없으므로 생성하지 않는다.
+        #    대신 cutmode / its_milling_tolerances / stepover 순서만 정리해 준다.
+        desired_order = [
+            "@xsi:type",
+            "cutmode",
+            "its_milling_tolerances",
+            "stepover",
+        ]
+        ordered = {}
+        for k in desired_order:
+            if k in strat:
+                ordered[k] = strat[k]
+        for k, v in strat.items():
+            if k not in ordered:
+                ordered[k] = v
+
+        op["its_machining_strategy"] = ordered
+
+        # tolerances required 필드(chordal_tolerance, scallop_height) 보강
+        ensure_dummy_milling_tolerances(ws_node)
+
+        # 타입 업그레이드 (two5D_milling_strategy → unidirectional) 및 pathmode 제거
+        _maybe_upgrade_2p5d_operation_and_strategy_type(ws_node, cam_to_14649_map)
+        return
+
+    # =========================
+    # 여기 아래는 기존 Freeform/기타 전략용 pathmode 로직 (PowerMILL 등)
+    # =========================
 
     # CAM 매핑에서 pathmode 소스 키 찾기
     pathmode_cam_key = None
@@ -563,7 +690,7 @@ def ensure_strategy_with_pathmode(
     # 값 주입
     strat["pathmode"] = pathmode_val
 
-    # 순서 재정렬: (@xsi:type) → its_milling_tolerances → pathmode → cutmode → stepover → 기타
+    # 순서 재정렬: (@xsi:type) → pathmode → cutmode → its_milling_tolerances → stepover → 기타
     desired_order = [
         "@xsi:type",
         "pathmode",
@@ -580,6 +707,12 @@ def ensure_strategy_with_pathmode(
             ordered[k] = v
 
     op["its_machining_strategy"] = ordered
+
+    # Freeform/기타 케이스에서도 tolerances required 필드 보강
+    ensure_dummy_milling_tolerances(ws_node)
+
+    # Freeform/기타 케이스에서도, 2.5D 서브타입이 있다면 타입 업그레이드
+    _maybe_upgrade_2p5d_operation_and_strategy_type(ws_node, cam_to_14649_map)
 
 
 def reorder_operation_children(op: dict) -> dict:

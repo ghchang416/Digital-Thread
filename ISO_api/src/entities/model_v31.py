@@ -2535,6 +2535,13 @@ class Two5DMillingStrategy:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
+    its_milling_tolerances: Optional[Tolerances] = field(
+        default=None,
+        metadata={
+            "type": "Element",
+            "namespace": "http://digital-thread.re/dt_asset",
+        },
+    )
 
 
 @dataclass
@@ -9133,14 +9140,14 @@ class BoundingGeometrySelect:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    advanced_brep_shape_representation: Optional[
-        AdvancedBrepShapeRepresentation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
+    advanced_brep_shape_representation: Optional[AdvancedBrepShapeRepresentation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/dt_asset",
+            },
+        )
     )
 
 
@@ -9156,9 +9163,7 @@ class CharacterizedProductDefinition:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    product_definition_relationship: Optional[
-        ProductDefinitionRelationship
-    ] = field(
+    product_definition_relationship: Optional[ProductDefinitionRelationship] = field(
         default=None,
         metadata={
             "type": "Element",
@@ -9508,9 +9513,7 @@ class CharacterizedDefinition:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    characterized_product_definition: Optional[
-        CharacterizedProductDefinition
-    ] = field(
+    characterized_product_definition: Optional[CharacterizedProductDefinition] = field(
         default=None,
         metadata={
             "type": "Element",
@@ -12059,14 +12062,14 @@ class DocumentedElementSelect:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_structure_association: Optional[
-        PhysicalItemStructureAssociation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
+    physical_item_structure_association: Optional[PhysicalItemStructureAssociation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/dt_asset",
+            },
+        )
     )
 
 
@@ -12233,14 +12236,14 @@ class ItemPropertySelect:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_structure_association: Optional[
-        PhysicalItemStructureAssociation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
+    physical_item_structure_association: Optional[PhysicalItemStructureAssociation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/dt_asset",
+            },
+        )
     )
 
 
@@ -13536,7 +13539,14 @@ class EffectiveElementSelect:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_state_association: Optional[PhysicalItemStateAssociation] = (
+    physical_item_state_association: Optional[PhysicalItemStateAssociation] = field(
+        default=None,
+        metadata={
+            "type": "Element",
+            "namespace": "http://digital-thread.re/dt_asset",
+        },
+    )
+    physical_item_location_association: Optional[PhysicalItemLocationAssociation] = (
         field(
             default=None,
             metadata={
@@ -13545,23 +13555,14 @@ class EffectiveElementSelect:
             },
         )
     )
-    physical_item_location_association: Optional[
-        PhysicalItemLocationAssociation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
-    )
-    physical_item_structure_association: Optional[
-        PhysicalItemStructureAssociation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
+    physical_item_structure_association: Optional[PhysicalItemStructureAssociation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/dt_asset",
+            },
+        )
     )
 
 
@@ -14275,14 +14276,14 @@ class GeneralOrganizationalDataSelect:
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_structure_association: Optional[
-        PhysicalItemStructureAssociation
-    ] = field(
-        default=None,
-        metadata={
-            "type": "Element",
-            "namespace": "http://digital-thread.re/dt_asset",
-        },
+    physical_item_structure_association: Optional[PhysicalItemStructureAssociation] = (
+        field(
+            default=None,
+            metadata={
+                "type": "Element",
+                "namespace": "http://digital-thread.re/dt_asset",
+            },
+        )
     )
 
 
@@ -14638,14 +14639,12 @@ class DtCuttingTool13399(DtCuttingTool):
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    general_classification_hierarchy: list[GeneralClassificationHierarchy] = (
-        field(
-            default_factory=list,
-            metadata={
-                "type": "Element",
-                "namespace": "http://digital-thread.re/dt_asset",
-            },
-        )
+    general_classification_hierarchy: list[GeneralClassificationHierarchy] = field(
+        default_factory=list,
+        metadata={
+            "type": "Element",
+            "namespace": "http://digital-thread.re/dt_asset",
+        },
     )
     geometric_model_relationship_with_transformation: list[
         GeometricModelRelationshipWithTransformation
@@ -14677,14 +14676,12 @@ class DtCuttingTool13399(DtCuttingTool):
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    item_characteristic_association: list[ItemCharacteristicAssociation] = (
-        field(
-            default_factory=list,
-            metadata={
-                "type": "Element",
-                "namespace": "http://digital-thread.re/dt_asset",
-            },
-        )
+    item_characteristic_association: list[ItemCharacteristicAssociation] = field(
+        default_factory=list,
+        metadata={
+            "type": "Element",
+            "namespace": "http://digital-thread.re/dt_asset",
+        },
     )
     item_definition: list[ItemDefinition] = field(
         default_factory=list,
@@ -14854,27 +14851,21 @@ class DtCuttingTool13399(DtCuttingTool):
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_location_association: list[
-        PhysicalItemLocationAssociation
-    ] = field(
+    physical_item_location_association: list[PhysicalItemLocationAssociation] = field(
         default_factory=list,
         metadata={
             "type": "Element",
             "namespace": "http://digital-thread.re/dt_asset",
         },
     )
-    physical_item_state_association: list[PhysicalItemStateAssociation] = (
-        field(
-            default_factory=list,
-            metadata={
-                "type": "Element",
-                "namespace": "http://digital-thread.re/dt_asset",
-            },
-        )
+    physical_item_state_association: list[PhysicalItemStateAssociation] = field(
+        default_factory=list,
+        metadata={
+            "type": "Element",
+            "namespace": "http://digital-thread.re/dt_asset",
+        },
     )
-    physical_item_structure_association: list[
-        PhysicalItemStructureAssociation
-    ] = field(
+    physical_item_structure_association: list[PhysicalItemStructureAssociation] = field(
         default_factory=list,
         metadata={
             "type": "Element",
