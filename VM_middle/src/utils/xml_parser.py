@@ -400,8 +400,10 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
     """
     dt_file XML에서 필요한 값 추출:
     - element_id, display_name
+    - category
     - content_oid: <value> (GridFS/ObjectId)
     - refs: {DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN}
+    - properties: [{"key": ..., "value": ...}, ...]
     """
     doc = xmltodict.parse(
         xml_text,
@@ -418,6 +420,7 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
 
     element_id = _get_by_local(item, "element_id")
     display_name = _get_by_local(item, "display_name")
+    category = _get_by_local(item, "category")
     content_oid = _get_by_local(item, "value")  # <value>69030ba1a9...>
 
     refs: Dict[str, Optional[str]] = {
@@ -446,13 +449,38 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
                 )
                 refs[k] = (txt or "").strip() if isinstance(txt, str) else None
 
+    # 🔽 properties 파싱 추가
+    props_out: list[dict[str, str]] = []
+    props_node = _get_by_local(item, "properties")
+    for p in _as_list(props_node):
+        if not isinstance(p, dict):
+            continue
+        key = _get_by_local(p, "key")
+        val = _get_by_local(p, "value")
+        if not isinstance(key, str):
+            continue
+        if isinstance(val, dict):
+            vtxt = val.get("#text")
+        else:
+            vtxt = val
+        props_out.append(
+            {
+                "key": key.strip(),
+                "value": (
+                    str(vtxt).strip() if isinstance(vtxt, (str, int, float)) else ""
+                ),
+            }
+        )
+
     return {
         "element_id": element_id,
         "display_name": display_name,
+        "category": category,  # 추가
         "content_oid": (
             (content_oid or "").strip() if isinstance(content_oid, str) else None
         ),
         "refs": refs,
+        "properties": props_out,  # 추가
     }
 
 
