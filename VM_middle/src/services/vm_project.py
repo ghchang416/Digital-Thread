@@ -150,7 +150,7 @@ def _stock_from_material_xml(material_xml: str) -> StockInfo:
             stock_size="0,0,0,0,0,0",
             reason="material_xml 파싱(길이/최소/최대 혼합 지원)",
         )
-    stock_size = f"{x_min},{y_min},{z_min},{x_max},{y_max},{z_max}"
+    stock_size = f"{x_min},{x_max},{y_min},{y_max},{z_min},{z_max}"
     return StockInfo(
         stock_type=code, stock_size=stock_size, reason="material_xml 파싱 성공"
     )
@@ -883,7 +883,9 @@ class VmProjectService:
             errors.append(f"stock_type {pf.stock_type} is not allowed")
 
         if not pf.stock_size or not _STOCK_SIZE_6NUM_RE.match(pf.stock_size):
-            errors.append("stock_size must be 6 numbers separated by commas")
+            errors.append(
+                "stock_size must be 6 numbers separated by commas (x_min,x_max,y_min,y_max,z_min,z_max)"
+            )
 
         # process/tool_data
         if not isinstance(pf.process, list) or len(pf.process) == 0:
