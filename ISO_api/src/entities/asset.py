@@ -523,6 +523,31 @@ class AssetRepository:
         limit: int = 500,
     ) -> list[dict]:
         """
+        (기존 기능 유지)
+        - category == 'NC' 인 dt_file만 찾는 버전
+        """
+        return await self.find_files_by_ref(
+            global_asset_id=global_asset_id,
+            asset_id=asset_id,
+            project_element_id=project_element_id,
+            workplan_id=workplan_id,
+            workingstep_id=workingstep_id,
+            categories=["NC"],  # ✅ 여기서만 NC로 제한
+            limit=limit,
+        )
+
+    async def find_files_by_ref(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        project_element_id: str,
+        workplan_id: str,
+        workingstep_id: Optional[str] = None,
+        categories: Optional[list[str]] = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """
         dt_file 문서들 중에서 reference.keys 안에
         - DT_GLOBAL_ASSET == global_asset_id
         - DT_ASSET == asset_id
@@ -530,39 +555,62 @@ class AssetRepository:
         - WORKPLAN == workplan_id
         - (옵션) WORKINGSTEP == workingstep_id
         를 모두 포함하는 dt_file들을 찾는다.
+        categories 가 주어지면 category 필터를 적용한다.
         """
-        conditions = [
+        conditions: list[dict] = [
             {"type": "dt_file"},
-            {"category": "NC"},
             {
                 "data": {
-                    "$regex": f"<key>DT_GLOBAL_ASSET</key>\\s*<value>{re.escape(global_asset_id)}</value>"
+                    "$regex": (
+                        f"<key>DT_GLOBAL_ASSET</key>"
+                        f"\\s*<value>{re.escape(global_asset_id)}</value>"
+                    )
                 }
             },
             {
                 "data": {
-                    "$regex": f"<key>DT_ASSET</key>\\s*<value>{re.escape(asset_id)}</value>"
+                    "$regex": (
+                        f"<key>DT_ASSET</key>"
+                        f"\\s*<value>{re.escape(asset_id)}</value>"
+                    )
                 }
             },
             {
                 "data": {
-                    "$regex": f"<key>DT_PROJECT</key>\\s*<value>{re.escape(project_element_id)}</value>"
+                    "$regex": (
+                        f"<key>DT_PROJECT</key>"
+                        f"\\s*<value>{re.escape(project_element_id)}</value>"
+                    )
                 }
             },
             {
                 "data": {
-                    "$regex": f"<key>WORKPLAN</key>\\s*<value>{re.escape(workplan_id)}</value>"
+                    "$regex": (
+                        f"<key>WORKPLAN</key>"
+                        f"\\s*<value>{re.escape(workplan_id)}</value>"
+                    )
                 }
             },
         ]
+
         if workingstep_id:
             conditions.append(
                 {
                     "data": {
-                        "$regex": f"<key>WORKINGSTEP</key>\\s*<value>{re.escape(workingstep_id)}</value>"
+                        "$regex": (
+                            f"<key>WORKINGSTEP</key>"
+                            f"\\s*<value>{re.escape(workingstep_id)}</value>"
+                        )
                     }
                 }
             )
+
+        # ✅ category 필터는 옵션
+        if categories:
+            if len(categories) == 1:
+                conditions.append({"category": categories[0]})
+            else:
+                conditions.append({"category": {"$in": categories}})
 
         query = {"$and": conditions}
         cursor = self.collection.find(

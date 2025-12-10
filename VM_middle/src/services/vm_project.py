@@ -150,7 +150,18 @@ def _stock_from_material_xml(material_xml: str) -> StockInfo:
             stock_size="0,0,0,0,0,0",
             reason="material_xml 파싱(길이/최소/최대 혼합 지원)",
         )
-    stock_size = f"{x_min},{x_max},{y_min},{y_max},{z_min},{z_max}"
+
+    # 좌표는 정수 좌표로 저장 (소수점 제거: 반올림 후 int)
+    xi_min = int(round(x_min))
+    xi_max = int(round(x_max))
+    yi_min = int(round(y_min))
+    yi_max = int(round(y_max))
+    zi_min = int(round(z_min))
+    zi_max = int(round(z_max))
+
+    # 순서: x_min, x_max, y_min, y_max, z_min, z_max
+    stock_size = f"{xi_min},{xi_max},{yi_min},{yi_max},{zi_min},{zi_max}"
+
     return StockInfo(
         stock_type=code, stock_size=stock_size, reason="material_xml 파싱 성공"
     )

@@ -772,12 +772,14 @@ class V3ProjectService:
             wp_ids = self._extract_workplan_ids_from_project_xml(project_xml)
             for wp_id in wp_ids:
                 try:
-                    rows = await self.repo.find_nc_files_by_ref(
+                    # ✅ category 필터 없이 모든 dt_file 검색
+                    rows = await self.repo.find_files_by_ref(
                         global_asset_id=global_asset_id,
                         asset_id=asset_id,
                         project_element_id=project_element_id,
                         workplan_id=wp_id,
-                        workingstep_id=None,  # 필요 시 확장
+                        workingstep_id=None,
+                        categories=None,  # None이면 NC/VM/기타 다 포함
                     )
                     for r in rows:
                         related.append(
@@ -790,7 +792,7 @@ class V3ProjectService:
                         )
                 except Exception:
                     logging.exception(
-                        "find_nc_files_by_ref failed for workplan_id=%s", wp_id
+                        "find_files_by_ref failed for workplan_id=%s", wp_id
                     )
 
         # 최종 중복 제거

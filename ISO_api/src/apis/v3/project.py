@@ -684,6 +684,14 @@ async def get_project_extract(
         type="dt_project",
         element_id=element_id,
     )
+
+    # ✅ 프로젝트가 없으면 404
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail="project not found by given keys",
+        )
+
     project_data = project["data"]
     res = await project_service.extract_attribute_path(
         xml_string=project_data, path=attribute_path
