@@ -36,6 +36,9 @@ from src.utils.v3_xml_parser import (
     validate_xml_against_schema,
     inject_cutting_tool_ref,
     get_nested_value,
+    build_step_thumbnail_image_dt_file_xml,
+    generate_step_thumbnail_ids,
+    extract_dtfile_oid,
 )
 from src.utils.exceptions import CustomException, ExceptionEnum
 from src.utils.file_modifier import read_json_file
@@ -59,6 +62,11 @@ from src.utils.cam_powermill_adapter import (
     pick_powermill_ops,
     reorder_powermill_files_by_order,
 )
+from src.utils.step_render_cadquery import (
+    InvalidStepFileError,
+    StepCadQueryRenderError,
+)
+from src.utils.step_render_bridge import render_step_bytes_to_png_bytes_via_renderenv
 import requests
 from src.config import settings
 
@@ -638,6 +646,120 @@ async def upload_one_asset(
         element_id=element_id,
         file_service=file_service,
     )
+
+
+@router.post(
+    "/step-thumbnail",
+    status_code=201,
+    response_model=AssetCreateResponse,
+    summary="프로젝트 STEP dt_file의 썸네일 생성 후 TITLE_IMAGE dt_file로 저장",
+)
+async def create_step_thumbnail(
+    global_asset_id: str = Query(..., description="프로젝트 global_asset_id"),
+    asset_id: str = Query(..., description="프로젝트 asset_id"),
+    element_id: str = Query(..., description="프로젝트 element_id"),
+    asset_service: AssetService = Depends(get_asset_service),
+    file_service: FileService = Depends(get_file_service),
+):
+    # 1) 최신 STEP dt_file 찾기
+    try:
+        step_doc = await asset_service.find_latest_step_file_by_project_ref(
+            global_asset_id=global_asset_id,
+            asset_id=asset_id,
+            project_element_id=element_id,
+            validate_project_exists=True,
+        )
+    except CustomException as ce:
+        if ce.enum == ExceptionEnum.NO_DATA_FOUND:
+            raise HTTPException(status_code=404, detail=ce.detail)
+        raise HTTPException(status_code=500, detail=ce.detail)
+
+    if not step_doc:
+        raise HTTPException(status_code=404, detail="STEP dt_file not found")
+
+    step_xml = step_doc.get("data") or ""
+    if not step_xml:
+        raise HTTPException(
+            status_code=500, detail="STEP dt_file XML(data)이 비어있습니다."
+        )
+
+    # 2) GridFS OID 추출
+    try:
+        step_file_oid = extract_dtfile_oid(step_xml)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"STEP dt_file에서 file oid 추출 실패: {e}"
+        )
+
+    # 3) STEP bytes 읽기
+    try:
+        step_bytes = await file_service.get_file_bytes(step_file_oid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"GridFS에서 STEP 파일 읽기 실패: {e}"
+        )
+
+    # 4) 렌더링 (renderenv subprocess)
+    try:
+        png_bytes = render_step_bytes_to_png_bytes_via_renderenv(
+            step_bytes=step_bytes,
+            resolution=(1920, 1080),
+        )
+    except InvalidStepFileError:
+        raise HTTPException(status_code=400, detail="잘못된 STEP 파일입니다.")
+    except StepCadQueryRenderError as e:
+        raise HTTPException(status_code=500, detail=f"STEP 렌더링 실패: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"예상치 못한 렌더 오류: {e}")
+
+    # 5) PNG GridFS 저장
+    png_filename = f"{step_doc.get('element_id', 'step')}_thumbnail.png"
+    try:
+        png_oid = await file_service.repository.insert_file(
+            png_bytes,
+            png_filename,
+            metadata={"source": "step-thumbnail", "from_step_oid": step_file_oid},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PNG GridFS 저장 실패: {e}")
+
+    # 6) TITLE_IMAGE dt_file XML 생성
+    image_xml = build_step_thumbnail_image_dt_file_xml(
+        project_global_asset_id=asset_service._normalize_global_asset_id(
+            global_asset_id
+        ),
+        project_asset_id=asset_id,
+        project_element_id=element_id,
+        file_oid=str(png_oid),
+        file_name=png_filename,
+    )
+
+    # 7) 기존 TITLE_IMAGE 존재 시 update
+    image_asset_id, image_element_id = generate_step_thumbnail_ids(asset_id)
+    existing = await asset_service.get_by_keys(
+        global_asset_id=asset_service._normalize_global_asset_id(global_asset_id),
+        asset_id=image_asset_id,
+        type="dt_file",
+        element_id=image_element_id,
+    )
+
+    if existing:
+        try:
+            old_oid = extract_dtfile_oid(existing.get("data") or "")
+            if old_oid:
+                await file_service.delete_file_by_id(old_oid)
+        except Exception:
+            pass
+
+        await asset_service.update_from_xml(
+            mongo_id=str(existing["_id"]),
+            xml=image_xml,
+            validate_schema=True,
+        )
+        return AssetCreateResponse(mongo_id=str(existing["_id"]))
+
+    created = await asset_service.create_from_xml(image_xml, upsert=False)
+    return created
 
 
 @router.get("/{element_id}", response_model=AssetDocument, summary="프로젝트 상세 조회")

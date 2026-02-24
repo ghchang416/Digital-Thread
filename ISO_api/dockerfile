@@ -1,14 +1,50 @@
-FROM continuumio/miniconda3 
+FROM continuumio/miniconda3
 
 WORKDIR /app
 
-RUN conda create -n myenv python=3.10
+RUN apt-get update && apt-get install -y \
+    libgl1 libglib2.0-0 libxrender1 libsm6 libxext6 \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN conda config --add channels conda-forge \
+    && conda config --set channel_priority strict
+
+RUN conda config --set remote_connect_timeout_secs 60 \
+    && conda config --set remote_read_timeout_secs 1200 \
+    && conda config --set remote_max_retries 50 \
+    && conda config --set remote_backoff_factor 3
+
+# ✅ API 서버 env (OCC만)
+RUN conda create -n myenv python=3.10 -y \
+    && conda clean -a -y
+
+RUN --mount=type=cache,target=/opt/conda/pkgs \
+    conda install -n myenv -y -c conda-forge pythonocc-core \
+    && conda clean -a -y
+
+# ✅ 렌더 env (cadquery + vtk)
+RUN conda create -n renderenv python=3.10 -y && conda clean -a -y
+
+# 1) 먼저 상대적으로 작은 cadquery
+RUN --mount=type=cache,target=/opt/conda/pkgs \
+    conda install -n renderenv -y -c conda-forge cadquery \
+    && rm -f /opt/conda/pkgs/*.conda.partial /opt/conda/pkgs/*.tar.bz2.partial || true \
+    && conda clean -a -y
+
+# 2) 그 다음 초대형 vtk
+RUN --mount=type=cache,target=/opt/conda/pkgs \
+    conda install -n renderenv -y -c conda-forge vtk \
+    && rm -f /opt/conda/pkgs/*.conda.partial /opt/conda/pkgs/*.tar.bz2.partial || true \
+    && conda clean -a -y
 
 COPY . /app
 
+# ✅ API requirements는 myenv에만
 RUN conda run -n myenv pip install --no-cache-dir -r /app/requirements.txt
-RUN conda run -n myenv conda install -c conda-forge pythonocc-core -y
 
-EXPOSE 8888
+# ✅ 렌더 requirements는 renderenv에만 (ezdxf pin)
+RUN conda run -n renderenv pip install --no-cache-dir -r /app/requirements-render.txt
 
+EXPOSE 8000
 CMD ["conda", "run", "--no-capture-output", "-n", "myenv", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

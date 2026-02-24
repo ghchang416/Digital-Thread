@@ -1,0 +1,2 @@
+ezdxf==1.4.3
+fonttools==4.61.1

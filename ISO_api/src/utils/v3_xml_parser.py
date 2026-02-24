@@ -2109,3 +2109,67 @@ def build_nc_dt_file_xml(
     validate_dtasset_or_raise(xml)
 
     return xml
+
+
+def generate_step_thumbnail_ids(project_asset_id: str) -> tuple[str, str]:
+    """
+    프로젝트 asset_id 기반으로 썸네일 dt_file의 (asset_id, element_id)를 고정 생성.
+    -> API를 여러 번 호출해도 동일 키로 upsert/update 가능(idempotent)
+    """
+
+    def _sanitize(s: str) -> str:
+        s = (s or "").strip()
+        return re.sub(r"[^\w\-]+", "_", s)
+
+    proj = _sanitize(project_asset_id)
+
+    image_asset_id = f"img_{proj}"
+    image_element_id = f"img_{proj}_step_thumb"
+    return image_asset_id, image_element_id
+
+
+def build_step_thumbnail_image_dt_file_xml(
+    *,
+    project_global_asset_id: str,  # ✅ 프로젝트 global_asset_id를 그대로 사용
+    project_asset_id: str,
+    project_element_id: str,
+    file_oid: str,
+    file_name: str,
+) -> str:
+    """
+    STEP 썸네일(PNG)용 TITLE_IMAGE dt_file dt_asset XML 생성
+    - 프로젝트 대표 이미지 성격이므로 WORKPLAN reference는 포함하지 않음
+    """
+    image_asset_id, image_element_id = generate_step_thumbnail_ids(project_asset_id)
+
+    dt_asset_root = {
+        "asset_global_id": project_global_asset_id,
+        "id": image_asset_id,
+        "asset_kind": "instance",
+        "dt_elements": {
+            "@xsi:type": "dt_file",
+            "element_id": image_element_id,
+            "category": "TITLE_IMAGE",  # ✅ 변경
+            "display_name": file_name,
+            "element_description": "STEP thumbnail image (png).",
+            "content_type": "image/png",
+            "value": file_oid,
+            "path": "",
+            "reference": {
+                "element_id": "",
+                "keys": [
+                    {"key": "DT_GLOBAL_ASSET", "value": project_global_asset_id},
+                    {"key": "DT_ASSET", "value": project_asset_id},
+                    {"key": "DT_PROJECT", "value": project_element_id},
+                    # ✅ WORKPLAN 제거
+                ],
+            },
+        },
+    }
+
+    ensure_dtasset_namespaces(dt_asset_root)
+    ensure_schema_version(dt_asset_root, None)
+
+    xml = xmltodict.unparse({"dt_asset": dt_asset_root}, pretty=True, attr_prefix="@")
+    validate_dtasset_or_raise(xml)
+    return xml

@@ -1231,3 +1231,53 @@ class AssetService:
         req = AssetCreateRequest(xml=nc_xml)
         resp = await self.repo.insert_asset(req)
         return resp
+
+    async def find_latest_step_file_by_project_ref(
+        self,
+        *,
+        global_asset_id: str,
+        asset_id: str,
+        project_element_id: str,
+        validate_project_exists: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        지정 '프로젝트'를 참조하는 STEP dt_file 중 최신 1개를 반환.
+        - category in (STEP, STP)
+        - 여러 개면 _id desc로 최신 1개 선택
+        - 없으면 None
+        """
+        g_url = self._normalize_global_asset_id(global_asset_id)
+        a_url = asset_id
+
+        # ✅ project_exists()는 레포에 없음
+        # ✅ 대신 get_project_xml_by_keys로 프로젝트 존재 여부 확인
+        if validate_project_exists:
+            project_xml = await self.repo.get_project_xml_by_keys(
+                global_asset_id=g_url,
+                asset_id=a_url,
+                project_element_id=project_element_id,
+            )
+            if not project_xml:
+                raise CustomException(
+                    ExceptionEnum.NO_DATA_FOUND,
+                    detail=f"project not found (project={project_element_id})",
+                )
+
+        q = {
+            "$and": [
+                {"type": "dt_file"},
+                {"category": {"$in": ["STEP", "STP"]}},
+                self._rx_kv("DT_GLOBAL_ASSET", g_url),
+                self._rx_kv("DT_ASSET", a_url),
+                self._rx_kv("DT_PROJECT", project_element_id),
+                # ✅ WORKPLAN 조건 제거
+            ]
+        }
+
+        cursor = self.repo.collection.find(
+            q,
+            projection={"_id": 1, "data": 1, "element_id": 1, "category": 1, "type": 1},
+        ).sort([("_id", -1)])
+
+        docs = await cursor.to_list(length=1)
+        return docs[0] if docs else None

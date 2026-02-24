@@ -795,6 +795,27 @@ class V3ProjectService:
                         "find_files_by_ref failed for workplan_id=%s", wp_id
                     )
 
+        # dt_file (프로젝트 레벨) — WORKPLAN 없이 프로젝트를 참조하는 파일들도 포함
+        if "dt_file" in include_ref_types:
+            try:
+                rows = await self.repo.find_files_by_project_ref(
+                    global_asset_id=global_asset_id,
+                    asset_id=asset_id,
+                    project_element_id=project_element_id,
+                    categories=None,  # None이면 STEP/TITLE_IMAGE 포함 전부
+                )
+                for r in rows:
+                    related.append(
+                        {
+                            "type": r.get("type") or "dt_file",
+                            "global_asset_id": r["global_asset_id"],
+                            "asset_id": r["asset_id"],
+                            "element_id": r["element_id"],
+                        }
+                    )
+            except Exception:
+                logging.exception("find_files_by_project_ref failed")
+
         # 최종 중복 제거
         dedup = []
         seen = set()
