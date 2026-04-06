@@ -860,36 +860,62 @@ class V3ProjectService:
 
     def _collect_ref_in_workplan_machine_tool(self, proj: dict) -> List[Dict[str, str]]:
         out: List[Dict[str, str]] = []
-        wp = proj.get("main_workplan")
-        if not isinstance(wp, dict):
-            return out
-        ref = wp.get("ref_dt_machine_tool")
-        if not ref:
-            return out
-        uri = self._extract_full_uri_from_ref(ref)
-        if uri:
-            out.append(self._split_full_uri_to_keys("dt_machine_tool", uri))
+        # ✅ 프로젝트 내 모든 workplan 후보를 돌면서 ref_dt_machine_tool 탐색
+        for wp in self._iter_workplan_nodes_in_project(proj):
+            if not isinstance(wp, dict):
+                continue
+
+            ref = wp.get("ref_dt_machine_tool")
+            if not ref:
+                continue
+
+            uri = self._extract_full_uri_from_ref(ref)
+            if uri:
+                out.append(self._split_full_uri_to_keys("dt_machine_tool", uri))
+
         return out
 
     def _collect_refs_in_workingsteps_tools(self, proj: dict) -> List[Dict[str, str]]:
         out: List[Dict[str, str]] = []
-        wp = proj.get("main_workplan")
-        elems = wp.get("its_elements") if isinstance(wp, dict) else None
-        elems = (
-            elems
-            if isinstance(elems, list)
-            else ([elems] if isinstance(elems, dict) else [])
-        )
-        for ws in elems:
-            op = ws.get("its_operation") if isinstance(ws, dict) else None
-            if not isinstance(op, dict):
+
+        # ✅ 프로젝트 내 workplan들을 모두 훑는다
+        for wp in self._iter_workplan_nodes_in_project(proj):
+            if not isinstance(wp, dict):
                 continue
-            ref = op.get("ref_dt_cutting_tool")
-            if not ref:
-                continue
-            uri = self._extract_full_uri_from_ref(ref)
-            if uri:
-                out.append(self._split_full_uri_to_keys("dt_cutting_tool_13399", uri))
+
+            elems = wp.get("its_elements")
+            # its_elements는 workingstep(list/dict)일 수도 있고, workplan 컨테이너(dict)일 수도 있음
+            ws_list = []
+            if isinstance(elems, list):
+                ws_list = elems
+            elif isinstance(elems, dict):
+                # dict 하나면 workingstep일 수도 있고(workplan 컨테이너일 수도 있음)
+                # - workingstep이면 its_operation이 있다
+                # - workplan 컨테이너면 @xsi:type=="workplan" 이다
+                if "its_operation" in elems:
+                    ws_list = [elems]
+                else:
+                    # workplan 컨테이너 형태면 여기서 workingstep이 안 나오므로 skip
+                    ws_list = []
+
+            for ws in ws_list:
+                if not isinstance(ws, dict):
+                    continue
+
+                op = ws.get("its_operation")
+                if not isinstance(op, dict):
+                    continue
+
+                ref = op.get("ref_dt_cutting_tool")
+                if not ref:
+                    continue
+
+                uri = self._extract_full_uri_from_ref(ref)
+                if uri:
+                    out.append(
+                        self._split_full_uri_to_keys("dt_cutting_tool_13399", uri)
+                    )
+
         return out
 
     def _extract_full_uri_from_ref(self, ref_node: dict) -> Optional[str]:
@@ -920,6 +946,83 @@ class V3ProjectService:
             "asset_id": parts[-2],
             "element_id": parts[-1],
         }
+
+    def _iter_workplan_nodes_in_project(self, proj: dict) -> List[dict]:
+        """
+        프로젝트(dt_project) 노드에서 '실제 workplan 노드'들을 모두 수집한다.
+
+        지원하는 구조:
+        A) (구버전/단순) main_workplan 바로 아래에 workingstep/ref가 있는 경우
+        - main_workplan 자체를 workplan처럼 취급
+        B) (현재 v31 형태) main_workplan/its_elements 가 workplan(xsi:type="workplan") 인 경우
+        - 그 하위 workplan들을 모두 수집
+        C) its_workplans 같은 추가 컨테이너가 생기는 경우에도 최대한 유연하게 대응
+        """
+        out: List[dict] = []
+
+        mw = proj.get("main_workplan")
+        if isinstance(mw, dict):
+            # main_workplan 자체가 "workplan처럼" 생긴 케이스(구버전 호환)
+            # - ref_dt_machine_tool 이 있거나
+            # - its_elements가 machining_workingstep들을 담고 있거나
+            out.append(mw)
+
+            # main_workplan 아래에 workplan 컨테이너가 있는 케이스(v31)
+            mw_elems = mw.get("its_elements")
+            out.extend(self._extract_workplans_from_container(mw_elems))
+
+        # (확장) its_workplans 같은 컨테이너가 별도로 있을 경우도 대응
+        wps = proj.get("its_workplans")
+        if isinstance(wps, dict):
+            # 스키마/작성 방식에 따라 workplan 키가 다를 수 있어 안전하게 탐색
+            out.extend(self._extract_workplans_from_container(wps.get("workplan")))
+            out.extend(self._extract_workplans_from_container(wps.get("its_elements")))
+
+        # 중복 제거 (객체 동일성 기준)
+        uniq: List[dict] = []
+        seen_ids = set()
+        for node in out:
+            if not isinstance(node, dict):
+                continue
+            # dict는 hash 불가라 id() 사용
+            ptr = id(node)
+            if ptr in seen_ids:
+                continue
+            seen_ids.add(ptr)
+            uniq.append(node)
+        return uniq
+
+    def _extract_workplans_from_container(self, container: Any) -> List[dict]:
+        """
+        container에서 workplan 노드(또는 workplan 리스트)를 최대한 안전하게 뽑아낸다.
+        - dict/list/None 모두 대응
+        - @xsi:type == "workplan" 인 dict를 우선적으로 workplan으로 취급
+        - 이미 workplan dict 형태(its_id + its_elements)를 가진 경우도 허용
+        """
+        if container is None:
+            return []
+
+        items = container if isinstance(container, list) else [container]
+        out: List[dict] = []
+
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+
+            t = it.get("@xsi:type") or it.get("xsi:type")
+
+            # 명시적으로 workplan
+            if t == "workplan":
+                out.append(it)
+                continue
+
+            # 경우에 따라 workplan wrapper가 없이 workplan 비슷한 dict가 들어올 수도 있음
+            # (its_id/its_elements 존재하면 workplan로 취급)
+            if "its_id" in it and "its_elements" in it:
+                out.append(it)
+                continue
+
+        return out
 
     # ---------------- dt_file 유틸 ----------------
 
@@ -1277,33 +1380,51 @@ class V3ProjectService:
         """
         프로젝트 XML에서 워크플랜 its_id 목록을 모두 수집.
         - main_workplan/its_id
-        - (선택) its_workplans 안의 워크플랜들(있다면)도 수집
+        - main_workplan/its_elements(workplan)/its_id  ✅ 추가
+        - (선택) its_workplans 컨테이너가 있다면 거기서도
         """
-        ids: list[str] = []
+        ids: List[str] = []
         try:
             doc = xmltodict.parse(project_xml)
             proj = (doc.get("dt_asset") or {}).get("dt_elements") or {}
             if not isinstance(proj, dict):
-                return ids
+                return []
 
             # main_workplan
-            mwp = proj.get("main_workplan")
-            if isinstance(mwp, dict):
-                wid = (mwp.get("its_id") or "").strip()
-                if wid:
-                    ids.append(wid)
+            mw = proj.get("main_workplan")
+            if isinstance(mw, dict):
+                mid = (mw.get("its_id") or "").strip()
+                if mid:
+                    ids.append(mid)
 
-            # 기타 워크플랜 컨테이너(스키마에 따라 없을 수 있음)
-            wps = proj.get("its_workplans")
-            if isinstance(wps, dict):
-                # 단일 또는 리스트 normalize
-                wlist = wps.get("workplan") or wps.get("its_elements") or wps
-                wlist = wlist if isinstance(wlist, list) else [wlist]
-                for w in wlist:
-                    if isinstance(w, dict):
-                        wid = (w.get("its_id") or "").strip()
-                        if wid:
-                            ids.append(wid)
+                # ✅ main_workplan 아래 workplan들
+                mw_elems = mw.get("its_elements")
+                wps = self._extract_workplans_from_container(mw_elems)
+                for wp in wps:
+                    wid = (wp.get("its_id") or "").strip()
+                    if wid:
+                        ids.append(wid)
+
+            # (확장) its_workplans
+            wps_container = proj.get("its_workplans")
+            if isinstance(wps_container, dict):
+                wps = []
+                wps.extend(
+                    self._extract_workplans_from_container(
+                        wps_container.get("workplan")
+                    )
+                )
+                wps.extend(
+                    self._extract_workplans_from_container(
+                        wps_container.get("its_elements")
+                    )
+                )
+                for wp in wps:
+                    wid = (wp.get("its_id") or "").strip()
+                    if wid:
+                        ids.append(wid)
+
         except Exception:
             pass
-        return list(dict.fromkeys(ids))  # 중복 제거
+
+        return list(dict.fromkeys(ids))
