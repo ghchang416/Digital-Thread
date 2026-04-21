@@ -44,8 +44,8 @@ async def upload_asset(
     xml: UploadFile = File(
         ..., description="업로드할 dt_asset XML (여러 dt_elements 포함 가능)"
     ),
-    upload_files: Optional[List[UploadFile]] = File(
-        None, description="dt_file 요소들과 매칭되는 실제 파일들(여러 개 가능)"
+    upload_files: List[UploadFile] = File(
+        default=None, description="dt_file 요소들과 매칭되는 실제 파일들(여러 개 가능)"
     ),
     asset_service: AssetService = Depends(get_asset_service),
     file_service: FileService = Depends(get_file_service),
