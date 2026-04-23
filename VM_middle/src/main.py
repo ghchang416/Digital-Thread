@@ -3,6 +3,7 @@ from src.core.config import settings
 from src.core import db
 from src.api.v1.iso import router as iso_router
 from src.api.v1.vm_project import router as vm_project_router
+from src.api.v1.dp import router as dp_router
 
 import asyncio
 
@@ -64,3 +65,4 @@ async def healthz():
 
 app.include_router(iso_router, prefix="/api/v1")
 app.include_router(vm_project_router, prefix="/api/v1")
+app.include_router(dp_router, prefix="/api/v1")

@@ -35,6 +35,7 @@ class VmProjectDAO:
         source: str = "iso",
         project_file_draft: Optional[dict] = None,
         proj_name: Optional[str] = None,
+        display_name: Optional[str] = None,
     ) -> ObjectId:
         doc = {
             "source": source,
@@ -46,6 +47,7 @@ class VmProjectDAO:
             "latest_files": {},
             "project_file_draft": project_file_draft or {},
             "proj_name": proj_name,
+            "display_name": display_name,
             "validation": {"is_valid": None, "errors": [], "updated_at": _now_iso()},
             # 👇 VM 시스템 연동용 필드들 (나열형, 최소 정보만)
             "vm_job_id": None,
@@ -225,6 +227,7 @@ class VmProjectDAO:
         *,
         vm_job_id: str,
         vm_state: str | None,
+        upload_result: bool = True,
     ) -> None:
         await self.col.update_one(
             {"_id": vm_project_id},
@@ -234,7 +237,8 @@ class VmProjectDAO:
                     "vm_job_id": vm_job_id,
                     "vm_last_polled_at": _now_iso(),
                     "vm_error_message": None,
-                    "vm_raw_status": vm_state,  # ← 응답의 state만 저장
+                    "vm_raw_status": vm_state,
+                    "upload_result": upload_result,
                     "updated_at": _now_iso(),
                 }
             },
@@ -279,6 +283,45 @@ class VmProjectDAO:
                 }
             },
         )
+
+    async def set_dt_file_upload_failed(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        attempts: int,
+        message: str,
+        vm_raw_status: Optional[str],
+    ) -> None:
+        """
+        dt_file 플랫폼 업로드 실패 기록. status는 running 유지, 재시도 횟수·에러 메시지만 갱신.
+        """
+        await self.col.update_one(
+            {"_id": vm_project_id},
+            {
+                "$set": {
+                    "vm_dt_file_upload_attempts": attempts,
+                    "vm_error_message": message,
+                    "vm_raw_status": vm_raw_status,
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+
+    async def reset_failed_to_ready(self, vm_project_id: ObjectId) -> bool:
+        res = await self.col.update_one(
+            {"_id": vm_project_id, "status": "failed"},
+            {
+                "$set": {
+                    "status": "ready",
+                    "vm_job_id": None,
+                    "vm_error_message": None,
+                    "vm_raw_status": None,
+                    "vm_last_polled_at": None,
+                    "updated_at": _now_iso(),
+                }
+            },
+        )
+        return res.matched_count > 0
 
     async def list_running_ids(self) -> list[ObjectId]:
         """

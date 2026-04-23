@@ -101,7 +101,7 @@ def parse_material_xml(xml_text: str) -> Dict[str, Any]:
         cdata_key="#text",
     )
 
-    dt_asset = _get_by_local(doc, "dt_asset") or {}
+    dt_asset = _get_by_local(doc, "dt_asset") or doc
     elems = _get_by_local(dt_asset, "dt_elements")
     items = _as_list(elems if elems is not None else [])
 
@@ -415,7 +415,7 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
         attr_prefix="@",
         cdata_key="#text",
     )
-    dt_asset = _get_by_local(doc, "dt_asset") or {}
+    dt_asset = _get_by_local(doc, "dt_asset") or doc
     item = _get_by_local(dt_asset, "dt_elements") or {}
 
     element_id = _get_by_local(item, "element_id")
@@ -507,13 +507,13 @@ def match_dt_file_refs(
 def make_vm_dt_file_xml(
     *,
     asset_global_id: str,
-    vm_asset_id: str,  # 예: "vm_001"
-    download_file_link: str,  # VM에서 받은 S3 URL
-    gid: str,  # DT_GLOBAL_ASSET (원본 프로젝트 gid)
-    aid: str,  # DT_ASSET (원본 프로젝트 aid)
-    eid: str,  # DT_PROJECT (원본 프로젝트 eid)
-    wpid: Optional[str],  # WORKPLAN (없으면 빈 문자열)
-    seq_id: int,  # 기존 SEQ_ID + 1 또는 1
+    vm_asset_id: str,
+    gid: str,
+    aid: str,
+    eid: str,
+    wpid: Optional[str],
+    seq_id: int,
+    download_file_link: str = "",  # ISO용 S3 URL; DP는 파일 직접 업로드하므로 빈값
     now: Optional[datetime] = None,
 ) -> str:
     """
@@ -590,6 +590,7 @@ def extract_project_summary(project_xml: str) -> Dict[str, Any]:
     """
     out = {
         "description": None,
+        "display_name": None,
         "main_wpid": None,
         "workplan_ids": [],
     }
@@ -626,11 +627,15 @@ def extract_project_summary(project_xml: str) -> Dict[str, Any]:
     if not isinstance(dt_proj, dict):
         return out
 
-    # 2) description: element_description 우선, 없으면 display_name
+    # 2) display_name 추출 (별도 저장)
+    dn = _get_by_local(dt_proj, "display_name")
+    if isinstance(dn, str) and dn.strip():
+        out["display_name"] = dn.strip()
+
+    # 3) description: element_description 우선, 없으면 display_name
     desc = _get_by_local(dt_proj, "element_description")
     if not isinstance(desc, str) or not desc.strip():
-        desc = _get_by_local(dt_proj, "display_name")
-
+        desc = dn
     if isinstance(desc, str):
         out["description"] = desc.strip() or None
 
@@ -679,3 +684,187 @@ def extract_project_summary(project_xml: str) -> Dict[str, Any]:
     out["main_wpid"] = main_wpid
     out["workplan_ids"] = unique_ids
     return out
+
+
+def _extract_block_size(wp_raw: dict) -> Optional[Tuple[float, float, float]]:
+    """Workpiece dict에서 its_bounding_geometry.block x/y/z 추출. 없으면 None."""
+    bg = _get_by_local(wp_raw, "its_bounding_geometry")
+    if not isinstance(bg, dict):
+        return None
+    block = _get_by_local(bg, "block")
+    if not isinstance(block, dict):
+        return None
+    try:
+        return (
+            float(_get_by_local(block, "x")),
+            float(_get_by_local(block, "y")),
+            float(_get_by_local(block, "z")),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_origin_coords(its_origin: Any) -> Optional[List[float]]:
+    """its_origin dict에서 location.coordinates → [x, y, z] 추출. 없으면 None."""
+    if not isinstance(its_origin, dict):
+        return None
+    location = _get_by_local(its_origin, "location")
+    if not isinstance(location, dict):
+        return None
+    coords = _as_list(_get_by_local(location, "coordinates"))
+    if len(coords) < 3:
+        return None
+    try:
+        return [float(c) for c in coords[:3]]
+    except (TypeError, ValueError):
+        return None
+
+
+def _walk_setups(workplan: dict):
+    """workplan dict에서 its_setup을 재귀적으로 yield (자식 workplan 포함)."""
+    for setup in _as_list(_get_by_local(workplan, "its_setup")):
+        if isinstance(setup, dict):
+            yield setup
+    for el in _as_list(_get_by_local(workplan, "its_elements")):
+        if not isinstance(el, dict):
+            continue
+        if _xsi_local(el.get("@xsi:type") or el.get("xsi:type")) == "workplan":
+            yield from _walk_setups(el)
+
+
+def extract_stock_bounds_from_project_xml(
+    project_xml: str,
+) -> Optional[Dict[str, float]]:
+    """
+    dt_project XML에서 소재 min/max 좌표를 추출한다.
+
+    탐색 순서:
+      1. its_workpieces (프로젝트 루트) → size_map[its_id] = (x, y, z)
+      2. main_workplan → its_setup → its_workpiece_setup → its_origin 에서 원점 좌표
+      3. its_workpiece_setup.its_workpiece 와 size_map 매칭:
+         a. its_workpiece 안에 its_bounding_geometry 가 인라인으로 있으면 그것 사용
+         b. 없으면 its_workpiece.its_id 로 size_map 에서 ID 매칭
+         c. 그래도 없으면 size_map 에 항목이 하나뿐일 때 그것 사용
+
+    반환: {"min_x", "min_y", "min_z", "max_x", "max_y", "max_z"} 또는 None
+    """
+    if not project_xml:
+        return None
+
+    doc = xmltodict.parse(
+        project_xml,
+        process_namespaces=True,
+        namespaces={
+            "http://digital-thread.re/dt_asset": None,
+            "http://www.w3.org/2001/XMLSchema-instance": "xsi",
+        },
+        attr_prefix="@",
+        cdata_key="#text",
+    )
+
+    dt_asset = _get_by_local(doc, "dt_asset") or doc
+    root_elems = _get_by_local(dt_asset, "dt_elements")
+    items = root_elems if isinstance(root_elems, list) else [root_elems]
+
+    dt_proj = None
+    for e in items:
+        if (
+            isinstance(e, dict)
+            and _xsi_local(e.get("@xsi:type") or e.get("xsi:type")) == "dt_project"
+        ):
+            dt_proj = e
+            break
+
+    if not isinstance(dt_proj, dict):
+        return None
+
+    # 1. 프로젝트 루트 its_workpieces → size_map
+    size_map: Dict[str, Tuple[float, float, float]] = {}
+    for wp_raw in _as_list(_get_by_local(dt_proj, "its_workpieces")):
+        if not isinstance(wp_raw, dict):
+            continue
+        wp_id = _get_by_local(wp_raw, "its_id")
+        size = _extract_block_size(wp_raw)
+        if size is not None:
+            size_map[wp_id] = size
+
+    # 2. main_workplan → its_setup → its_workpiece_setup 탐색
+    main_wp = _get_by_local(dt_proj, "main_workplan")
+    if not isinstance(main_wp, dict):
+        return None
+
+    for setup in _walk_setups(main_wp):
+        for wp_setup in _as_list(_get_by_local(setup, "its_workpiece_setup")):
+            if not isinstance(wp_setup, dict):
+                continue
+
+            origin = _extract_origin_coords(_get_by_local(wp_setup, "its_origin"))
+            if origin is None:
+                continue
+
+            # 3. 크기 결정
+            wp_ref = _get_by_local(wp_setup, "its_workpiece")
+            size: Optional[Tuple[float, float, float]] = None
+
+            if isinstance(wp_ref, dict):
+                # a. 인라인 its_bounding_geometry 우선
+                size = _extract_block_size(wp_ref)
+                # b. ID 매칭
+                if size is None:
+                    ref_id = _get_by_local(wp_ref, "its_id")
+                    size = size_map.get(ref_id)
+
+            # c. size_map 에 항목이 하나뿐이면 그것 사용
+            if size is None and len(size_map) == 1:
+                size = next(iter(size_map.values()))
+
+            if size is None:
+                continue
+
+            min_x, min_y, min_z = origin
+            sx, sy, sz = size
+            return {
+                "min_x": min_x,
+                "min_y": min_y,
+                "min_z": min_z,
+                "max_x": min_x + sx,
+                "max_y": min_y + sy,
+                "max_z": min_z + sz,
+            }
+
+    return None
+
+
+def extract_vm_workplans(project_xml: str) -> List[Dict[str, Any]]:
+    """
+    dt_project XML에서 VM 실행 단위 워크플랜 목록을 반환한다.
+
+    패턴 A — main 아래 하위 workplan 1개:
+        → [{"wpid": child, "ws_count": N, "pattern": "single_sub"}]
+    패턴 B — main 아래 하위 workplan 여러 개:
+        → [{"wpid": child1, ...}, {"wpid": child2, ...}, ...]
+    패턴 C — main 아래 바로 workingstep (하위 workplan 없음):
+        → [{"wpid": main_wpid, "ws_count": N, "pattern": "main_direct"}]
+    """
+    summary = extract_project_summary(project_xml)
+    main_wpid = summary.get("main_wpid")
+    all_wpids = summary.get("workplan_ids") or []
+
+    child_wpids = [w for w in all_wpids if w != main_wpid]
+
+    if not child_wpids:
+        ws = extract_tool_refs_in_order(project_xml, wpid=None)
+        return [{"wpid": main_wpid, "ws_count": len(ws), "pattern": "main_direct"}]
+
+    if len(child_wpids) == 1:
+        ws = extract_tool_refs_in_order(project_xml, wpid=child_wpids[0])
+        return [{"wpid": child_wpids[0], "ws_count": len(ws), "pattern": "single_sub"}]
+
+    return [
+        {
+            "wpid": cwp,
+            "ws_count": len(extract_tool_refs_in_order(project_xml, wpid=cwp)),
+            "pattern": "multi_sub",
+        }
+        for cwp in child_wpids
+    ]

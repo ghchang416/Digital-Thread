@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     ISO_PATH_ASSET_LIST: str = "/api/v3/assets"
 
     DP_API_URL: AnyHttpUrl | str = "http://220.75.173.230:20220"
+    DP_API_KEY: str = ""
 
     # VM 서버 (기본값 제공)
     VM_API_URL: AnyHttpUrl = "https://api.unicncsolutions.com"

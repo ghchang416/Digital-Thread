@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from bson import ObjectId
 from src.schemas.vm_project import (
     VmProjectCreateIn,
+    StartVmIn,
     CreateFromIsoOut,
     ProjectFileOut,
     StockPatchIn,
@@ -24,13 +25,17 @@ async def create_full(
     payload: VmProjectCreateIn, svc: VmProjectService = Depends(get_vm_project_service)
 ):
     """
-    ISO 프로젝트 정보를 입력하여 vm 프로젝트를 생성합니다.
-    - gid : ISO 프로젝트의 global_asset_id
-    - aid : ISO 프로젝트의 asset_id
-    - eid : ISO 프로젝트의 element_id
-    - wpid : ISO 프로젝트의 workplan its_id
+    VM 프로젝트를 생성합니다.
+    - source : 데이터 소스 ("iso" 또는 "dp", 기본값 "iso")
+    - gid : 프로젝트의 global_asset_id
+    - aid : 프로젝트의 asset_id
+    - eid : 프로젝트의 element_id
+    - wpid : 워크플랜 its_id
     """
-    result = await svc.create_full_from_iso(payload)
+    if payload.source == "dp":
+        result = await svc.create_full_from_dp(payload)
+    else:
+        result = await svc.create_full_from_iso(payload)
     return result
 
 
@@ -74,13 +79,49 @@ async def get_vm_project_detail(
     return await svc.get_detail(ObjectId(vm_project_id))
 
 
-@router.post("/{vm_project_id}/start-vm")
-async def start_vm(
+@router.post("/{vm_project_id}/poll")
+async def poll_vm(
     vm_project_id: str,
     svc: VmProjectService = Depends(get_vm_project_service),
 ):
-    vm_project_id = ObjectId(vm_project_id)
-    return await svc.start_vm_job(vm_project_id)
+    """
+    특정 VM 프로젝트의 상태를 즉시 폴링합니다.
+    running 상태인 프로젝트만 폴링하며, VM 상태에 따라 completed / failed 로 전환합니다.
+    """
+    try:
+        token = await svc._vm_issue_token()
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=f"VM 토큰 발급 실패: {e}")
+    return await svc.poll_vm_status(ObjectId(vm_project_id), token=token)
+
+
+@router.post("/{vm_project_id}/reset", summary="VM 프로젝트 리셋 (failed → ready)")
+async def reset_vm_project(
+    vm_project_id: str,
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    """
+    'failed' 상태의 VM 프로젝트를 'ready'로 리셋합니다.
+    vm_job_id, vm_error_message, vm_raw_status를 초기화하여 재실행을 허용합니다.
+    """
+    return await svc.reset_to_ready(ObjectId(vm_project_id))
+
+
+@router.post("/{vm_project_id}/start-vm")
+async def start_vm(
+    vm_project_id: str,
+    body: StartVmIn = StartVmIn(),
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    """
+    VM 가상가공을 시작합니다.
+
+    - **upload_result**: VM 완료 후 결과 처리 방식
+      - `true` (기본값): 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드
+      - `false`: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장
+    """
+    return await svc.start_vm_job(ObjectId(vm_project_id), upload_result=body.upload_result)
 
 
 # @router.post("/from-iso/preview", response_model=PreviewFromIsoOut)

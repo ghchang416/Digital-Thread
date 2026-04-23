@@ -26,13 +26,15 @@ class VmProjectStatusEnum(str, Enum):
 # ==== 입력 ====
 class VmProjectCreateIn(BaseModel):
     """
-    ISO로부터 VM 프로젝트 생성을 위한 키 입력.
+    VM 프로젝트 생성 입력.
+    - source: 데이터 소스 ("iso" 또는 "dp", 기본값 "iso")
     - gid: Global Asset ID (URL)
     - aid: Asset ID
     - eid: 프로젝트 element_id (dt_project)
     - wpid: (선택) workplan its_id
     """
 
+    source: str = Field("iso", description="데이터 소스: 'iso' 또는 'dp'")
     gid: str = Field(..., min_length=1, description="Global Asset ID (URL)")
     aid: str = Field(..., min_length=1, description="Asset ID")
     eid: str = Field(..., min_length=1, description="Project element_id")
@@ -61,8 +63,8 @@ class ProcessItemIn(BaseModel):
 
 
 class StockInfo(BaseModel):
-    stock_type: Optional[int] = Field(
-        None, description="소재 타입 코드(내부 매핑 결과)"
+    stock_type: Optional[str] = Field(
+        None, description="소재 타입 코드 (문자열, 예: '9', '45')"
     )
     stock_size: Optional[str] = Field(
         None, description="x0,y0,z0,x1,y1,z1 (6개 실수, 콤마 구분)"
@@ -86,7 +88,7 @@ class StockInfo(BaseModel):
 
 # ==== 출력 ====
 class ProjectFileOut(BaseModel):
-    stock_type: Optional[int]
+    stock_type: Optional[str]
     stock_size: Optional[str]
     process_count: int
     process: List[ProcessItemIn]
@@ -98,8 +100,19 @@ class CreateFromIsoOut(BaseModel):
     project_file: ProjectFileOut
 
 
+class StartVmIn(BaseModel):
+    upload_result: bool = Field(
+        True,
+        description=(
+            "VM 완료 후 결과 처리 방식. "
+            "true: 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드 (권장). "
+            "false: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장."
+        ),
+    )
+
+
 class StockPatchIn(BaseModel):
-    stock_type: Optional[int] = None
+    stock_type: Optional[str] = None
     stock_size: Optional[str] = None
 
     @field_validator("stock_size")
@@ -131,7 +144,9 @@ class VmProjectListItem(BaseModel):
     status: VmProjectStatusEnum = Field(
         description="needs-fix/ready/running/completed/failed"
     )
+    source: str = Field("iso", description="데이터 소스: 'iso' 또는 'dp'")
     proj_name: str | None = None
+    display_name: str | None = None
     gid: str
     aid: str
     eid: str
@@ -153,7 +168,9 @@ class VmProjectListResponse(BaseModel):
 class VmProjectDetailOut(BaseModel):
     id: str = Field(description="vm_project _id")
     status: VmProjectStatusEnum = Field(description="현재 상태")
+    source: str = Field("iso", description="데이터 소스: 'iso' 또는 'dp'")
     proj_name: Optional[str] = None
+    display_name: Optional[str] = None
 
     gid: str
     aid: str
@@ -183,9 +200,39 @@ class VmProjectDetailOut(BaseModel):
 
 
 class StockItemOut(BaseModel):
-    code: int = Field(description="stock_type 코드 (정수)")
+    code: str = Field(description="stock_type 코드 (문자열, 예: '9', '45')")
     name: str = Field(description="표시용 원문 이름(정확 문자열)")
 
 
 class StockItemsResponse(BaseModel):
     items: List[StockItemOut]
+
+
+# ==== DP 전용 응답 스키마 ====
+class DpProjectItem(BaseModel):
+    gid: str
+    aid: str
+    eid: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+
+
+class DpProjectListResponse(BaseModel):
+    items: List[DpProjectItem]
+    total: int
+    page: int
+    size: int
+
+
+class DpWorkplanItem(BaseModel):
+    wpid: Optional[str]
+    ws_count: int
+    pattern: str
+
+
+class DpWorkplanListResponse(BaseModel):
+    gid: str
+    aid: str
+    eid: str
+    workplans: List[DpWorkplanItem]

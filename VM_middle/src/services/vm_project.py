@@ -37,6 +37,8 @@ from src.utils.stock import lookup_stock_code, is_known_stock_code
 from src.utils.xml_parser import (
     extract_material_ref_from_project_xml,  # -> Optional[(gid, aid, eid)]
     extract_tool_refs_in_order,  # (project_xml, wpid) -> [{gid, aid, eid, tool_element_id, ...}]
+    extract_stock_bounds_from_project_xml,  # -> Optional[{min_x, max_x, ...}]
+    extract_project_summary,  # -> {display_name, description, main_wpid, ...}
     match_dt_file_refs,  # (parsed, gid=..., aid=..., eid=..., wpid=...)
     parse_cutting_tool_13399_xml,
     parse_dt_file_xml,
@@ -45,6 +47,7 @@ from src.utils.xml_parser import (
 )
 from src.services.vm_file import VmFileService
 from src.utils.stock import STOCK_ITEMS
+import src.clients.dp as dp_client
 
 import logging
 
@@ -257,28 +260,42 @@ class VmProjectService:
                 return r.content.decode("utf-8", errors="ignore")
 
     # ---------------- Stock 계산 ----------------
+    @staticmethod
+    def _fmt_stock_size(bounds: Dict[str, float]) -> str:
+        """bounds dict → "min_x,max_x,min_y,max_y,min_z,max_z" 정수 문자열."""
+        return ",".join(
+            str(int(round(bounds[k])))
+            for k in ("min_x", "max_x", "min_y", "max_y", "min_z", "max_z")
+        )
+
     async def compute_stock_auto(self, payload: VmProjectCreateIn) -> StockInfo:
-        # payload: gid, aid, eid, wpid  (스키마가 개정되었다고 가정)
         proj_xml = await self._fetch_project_xml(
             eid=payload.eid, gid=payload.gid, aid=payload.aid
         )
 
-        mat_ref = extract_material_ref_from_project_xml(
-            proj_xml
-        )  # -> (gid2, aid2, eid2) | None
+        # 소재 크기: project XML의 its_workpieces + its_workpiece_setup 기반
+        bounds = extract_stock_bounds_from_project_xml(proj_xml)
+        stock_size = self._fmt_stock_size(bounds) if bounds else None
+
+        # 소재 타입 코드: dt_material의 material_identifier에서 매핑
+        stock_type = None
+        mat_ref = extract_material_ref_from_project_xml(proj_xml)
         if mat_ref:
             gid2, aid2, eid2 = mat_ref
             gid2 = gid2 or payload.gid
             aid2 = aid2 or payload.aid
             mxml = await self._fetch_material_xml(eid=eid2, gid=gid2, aid=aid2)
             if mxml:
-                return _stock_from_material_xml(mxml)
+                parsed = parse_material_xml(mxml)
+                name = parsed.get("material_identifier") or parsed.get("display_name")
+                stock_type = lookup_stock_code(name)
 
-        return StockInfo(
-            stock_type=None,
-            stock_size=None,
-            reason="material 추정 실패(its_workpieces/ref_dt_material 단서 없음)",
-        )
+        if bounds:
+            reason = "project XML bounding geometry 추출 성공"
+        else:
+            reason = "its_workpieces/its_workpiece_setup 단서 없음"
+
+        return StockInfo(stock_type=stock_type, stock_size=stock_size, reason=reason)
 
     # ---------------- 프로젝트 파일 빌더 ----------------
     def _build_project_file(
@@ -456,6 +473,7 @@ class VmProjectService:
         proj_xml = await self._fetch_project_xml(
             eid=payload.eid, gid=payload.gid, aid=payload.aid
         )
+        debug["display_name"] = extract_project_summary(proj_xml).get("display_name")
 
         # 2) 워크플랜 확인/WS 추출
         ws_refs = extract_tool_refs_in_order(
@@ -596,7 +614,9 @@ class VmProjectService:
             )
 
             def _fmt6(x: Optional[float]) -> str:
-                return "{:.6f}".format(x) if isinstance(x, (int, float)) else "null"
+                if not isinstance(x, (int, float)):
+                    return "null"
+                return str(int(x)) if x % 1 == 0 else "{:g}".format(x)
 
             tool_data = ",".join(
                 [
@@ -634,10 +654,10 @@ class VmProjectService:
             process=process_items,
         )
 
-        # 11) ncdata.zip
+        # 11) ncdata.zip — root_dir=ncdata_dir 로 압축 시 분할폴더가 zip 최상위에 위치
         zip_out = os.path.join(work_dir, "ncdata")
         archive_path = shutil.make_archive(
-            zip_out, "zip", root_dir=work_dir, base_dir="ncdata"
+            zip_out, "zip", root_dir=ncdata_dir
         )
         debug["ncdata_zip"] = archive_path
 
@@ -784,6 +804,7 @@ class VmProjectService:
         zip_path = debug["ncdata_zip"]  # tmp/<proj>/ncdata.zip
         prj_path = debug["project_prj"]  # tmp/<proj>/<eid>[ -N].prj
         proj_name = debug.get("proj_name")
+        display_name = debug.get("display_name")
         dtfile_meta = debug.get("dt_file") or {}
         work_dir = debug.get("work_dir")  # 👈 tmp/<proj_name>
 
@@ -797,6 +818,7 @@ class VmProjectService:
                 wpid=payload.wpid,
                 project_file_draft=project_file.model_dump(),
                 proj_name=proj_name,
+                display_name=display_name,
             )
 
             # 3) GridFS 업로드 + vm_file 생성
@@ -884,6 +906,337 @@ class VmProjectService:
                 except Exception as e:
                     logger.warning("Failed to cleanup tmp work_dir %s: %s", work_dir, e)
 
+    # ================================================================
+    # DP 파이프라인
+    # ================================================================
+
+    async def _preview_from_dp_with_nc(
+        self, payload: VmProjectCreateIn
+    ) -> Tuple[StockInfo, ProjectFileOut, Dict]:
+        """
+        DP 데이터 소스 기반 풀 파이프라인 (ISO 버전인 preview_from_iso_with_nc의 DP 버전).
+        소재/공구 조회 실패 시 graceful degradation → needs-fix.
+        """
+        debug: Dict[str, Any] = {}
+
+        # 1) 프로젝트 XML
+        proj_xml = await dp_client.get_element_xml(aid=payload.aid, eid=payload.eid)
+        if not proj_xml:
+            raise ValueError("DP에서 프로젝트 xmlStr을 가져오지 못했습니다.")
+        debug["display_name"] = extract_project_summary(proj_xml).get("display_name")
+
+        # 2) WS 추출
+        ws_refs = extract_tool_refs_in_order(proj_xml, wpid=payload.wpid)
+        debug["ws_count"] = len(ws_refs)
+
+        # 3) 소재 크기: project XML에서 직접 추출 (예외 없음)
+        bounds = extract_stock_bounds_from_project_xml(proj_xml)
+        stock_size = self._fmt_stock_size(bounds) if bounds else None
+
+        # 4) 소재 타입 코드: dt_material API 조회 (실패해도 graceful)
+        # DP API는 aid를 "gid/aid" 형태의 전체 URL로 요구
+        stock_type = None
+        try:
+            mat_ref = extract_material_ref_from_project_xml(proj_xml)
+            if mat_ref:
+                mat_gid, mat_aid, mat_eid = mat_ref
+                mat_gid = mat_gid or payload.gid
+                dp_mat_aid = f"{mat_gid}/{mat_aid}" if mat_aid else mat_gid
+                mat_xml = await dp_client.get_element_xml(aid=dp_mat_aid, eid=mat_eid)
+                if mat_xml:
+                    parsed = parse_material_xml(mat_xml)
+                    name = parsed.get("material_identifier") or parsed.get("display_name")
+                    stock_type = lookup_stock_code(name)
+        except Exception as e:
+            logger.warning("DP 소재 타입 조회 실패(graceful): %s", e)
+
+        reason = "project XML bounding geometry 추출 성공" if bounds else "its_workpieces/its_workpiece_setup 단서 없음"
+        stock = StockInfo(stock_type=stock_type, stock_size=stock_size, reason=reason)
+
+        # 4) DP gid 기준으로 file 타입 element 목록 조회
+        try:
+            gid_elements = await dp_client.list_elements_by_gid(payload.gid)
+        except Exception as e:
+            raise ValueError(f"DP element 목록 조회 실패: {e}")
+
+        file_items = [
+            item for item in (gid_elements.get("content") or [])
+            if (item.get("type") or "").lower() == "file"
+        ]
+        if not file_items:
+            raise ValueError("DP에서 dt_file 후보를 찾지 못했습니다.")
+
+        # 5) dt_file 매칭 (xmlStr로 parse_dt_file_xml + match_dt_file_refs 재사용)
+        matched_item: Optional[Dict[str, Any]] = None
+        matched_info: Optional[Dict[str, Any]] = None
+
+        for item in file_items:
+            item_aid = item.get("assetId") or ""
+            item_eid = item.get("elementId") or ""
+            if not item_aid or not item_eid:
+                continue
+            try:
+                xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
+            except Exception:
+                continue
+            if not xml:
+                continue
+            info = parse_dt_file_xml(xml) or {}
+            if self._match_dt_file_dp(info, gid=payload.gid, eid=payload.eid, wpid=payload.wpid):
+                matched_item = item
+                matched_info = info
+                break
+
+        if not matched_item or not matched_info:
+            raise ValueError("프로젝트/워크플랜 키와 일치하는 dt_file을 찾지 못했습니다.")
+
+        nc_path = matched_item.get("path") or ""
+        if not nc_path:
+            raise ValueError("매칭된 dt_file의 path가 비어 있습니다.")
+
+        debug["dt_file"] = {
+            "aid": matched_item.get("assetId"),
+            "eid": matched_item.get("elementId"),
+            "path": nc_path,
+        }
+
+        # 6) NC 다운로드
+        nc_text = await dp_client.download_nc_file(nc_path)
+        if not nc_text:
+            raise ValueError("NC 파일 다운로드 실패 (빈 응답)")
+
+        # 7) NC 분할
+        proj_name = self._create_vm_project_name()
+        work_dir = os.path.join("tmp", proj_name)
+        ncdata_dir = os.path.join(work_dir, "ncdata")
+        os.makedirs(ncdata_dir, exist_ok=True)
+
+        base_filename = matched_info.get("display_name") or matched_item.get("elementId") or "program.nc"
+        saved_paths = process_nc_text(nc_text, ncdata_dir, base_filename_with_ext=base_filename)
+
+        debug["proj_name"] = proj_name
+        debug["work_dir"] = work_dir
+        debug["nc_saved_count"] = len(saved_paths)
+
+        # 8) WS 수 == 분할 수 검증
+        if len(saved_paths) != len(ws_refs):
+            raise ValueError(
+                f"워킹스텝 수({len(ws_refs)})와 NC 분할 수({len(saved_paths)}) 불일치"
+            )
+
+        # 9) 툴 번호 비교
+        nc_tools = extract_tool_numbers_from_paths(saved_paths)
+        ws_tools_num: List[Optional[int]] = []
+        for w in ws_refs:
+            t_eid = w.get("tool_element_id") or w.get("eid")
+            num = None
+            if isinstance(t_eid, str):
+                m = re.search(r"T(\d+)$", t_eid.strip(), re.IGNORECASE)
+                if m:
+                    num = int(m.group(1))
+            ws_tools_num.append(num)
+
+        mismatch_errors = self._compare_tool_numbers(nc_tools, ws_tools_num)
+        debug["tool_numbers_ok"] = len(mismatch_errors) == 0
+        debug["tool_number_mismatches"] = mismatch_errors
+
+        # 10) process 생성 (공구 조회 실패 → null 채움, graceful)
+        process_items: List[ProcessItemIn] = []
+        for idx, w in enumerate(ws_refs):
+            tnum = nc_tools[idx] if nc_tools[idx] is not None else ws_tools_num[idx]
+
+            eff = cr = teeth = None
+            tool_eid = w.get("eid") or w.get("tool_element_id")
+            tool_short_aid = w.get("aid")
+            tool_gid = w.get("gid") or payload.gid
+            # DP API는 aid를 "gid/aid" 형태의 전체 URL로 요구
+            tool_aid = f"{tool_gid}/{tool_short_aid}" if tool_short_aid else None
+
+            if tool_eid and tool_aid:
+                try:
+                    tool_xml = await dp_client.get_element_xml(aid=tool_aid, eid=tool_eid)
+                    if tool_xml:
+                        parsed = parse_cutting_tool_13399_xml(tool_xml) or {}
+                        vals = parsed.get("values") or {}
+                        eff = vals.get("effective_cutting_diameter")
+                        cr = vals.get("corner_radius")
+                        teeth = vals.get("number_of_teeth")
+                except Exception as e:
+                    logger.warning("DP 공구 조회 실패(graceful) eid=%s: %s", tool_eid, e)
+
+            half_minus_cr = (
+                (eff / 2 - cr)
+                if (isinstance(eff, (int, float)) and isinstance(cr, (int, float)))
+                else None
+            )
+
+            def _fmt6(x: Optional[float]) -> str:
+                if not isinstance(x, (int, float)):
+                    return "null"
+                return str(int(x)) if x % 1 == 0 else "{:g}".format(x)
+
+            tool_data = ",".join([
+                str(tnum) if tnum is not None else "null",
+                _fmt6(eff), _fmt6(cr), _fmt6(half_minus_cr), _fmt6(cr),
+                "null", "null", "null",
+                _fmt6(teeth),
+            ])
+
+            abs_path = saved_paths[idx]
+            rel_path = os.path.relpath(abs_path, start=work_dir)
+            rel_path_win = rel_path.replace("/", "\\")
+            stem = os.path.splitext(os.path.basename(rel_path))[0]
+            out_dir_win = os.path.join("result", stem).replace("/", "\\")
+
+            process_items.append(
+                ProcessItemIn(
+                    file_path=rel_path_win,
+                    output_dir_path=out_dir_win,
+                    tool_data=tool_data,
+                )
+            )
+
+        project_file = ProjectFileOut(
+            stock_type=stock.stock_type,
+            stock_size=stock.stock_size,
+            process_count=len(process_items),
+            process=process_items,
+        )
+
+        # 11) ncdata.zip + project.prj — root_dir=ncdata_dir 로 압축 시 분할폴더가 zip 최상위에 위치
+        zip_out = os.path.join(work_dir, "ncdata")
+        archive_path = shutil.make_archive(zip_out, "zip", root_dir=ncdata_dir)
+        debug["ncdata_zip"] = archive_path
+
+        prj_path = self._write_project_prj(work_dir, payload.eid or "project", project_file)
+        debug["project_prj"] = prj_path
+
+        return stock, project_file, debug
+
+    async def create_full_from_dp(self, payload: VmProjectCreateIn) -> dict:
+        """
+        DP 데이터 소스 기반 VM 프로젝트 생성 (ISO 버전인 create_full_from_iso의 DP 버전).
+        """
+        stock, project_file, debug = await self._preview_from_dp_with_nc(payload)
+        zip_path = debug["ncdata_zip"]
+        prj_path = debug["project_prj"]
+        proj_name = debug.get("proj_name")
+        display_name = debug.get("display_name")
+        dtfile_meta = debug.get("dt_file") or {}
+        work_dir = debug.get("work_dir")
+
+        try:
+            vm_project_id = await self.dao.insert_initial_from_iso(
+                source="dp",
+                gid=payload.gid,
+                aid=payload.aid,
+                eid=payload.eid,
+                wpid=payload.wpid,
+                project_file_draft=project_file.model_dump(),
+                proj_name=proj_name,
+                display_name=display_name,
+            )
+
+            zip_vm_file_id = await self.vm_file_svc.create_from_path(
+                vm_project_id=vm_project_id,
+                kind="nc-split-zip",
+                file_path=zip_path,
+                original_name="ncdata.zip",
+                content_type="application/zip",
+                meta={
+                    "source": "dp",
+                    "gid": payload.gid,
+                    "aid": payload.aid,
+                    "eid": payload.eid,
+                    "wpid": payload.wpid,
+                    "dt_file": {
+                        "aid": dtfile_meta.get("aid"),
+                        "eid": dtfile_meta.get("eid"),
+                    },
+                },
+            )
+
+            prj_vm_file_id = await self.vm_file_svc.create_from_path(
+                vm_project_id=vm_project_id,
+                kind="vm-project-json",
+                file_path=prj_path,
+                original_name=os.path.basename(prj_path),
+                content_type="application/octet-stream",
+                meta={
+                    "source": "dp",
+                    "gid": payload.gid,
+                    "aid": payload.aid,
+                    "eid": payload.eid,
+                    "wpid": payload.wpid,
+                    "process_count": project_file.process_count,
+                },
+            )
+
+            await self.dao.set_latest_files(
+                vm_project_id,
+                {
+                    "nc-split-zip": zip_vm_file_id,
+                    "vm-project-json": prj_vm_file_id,
+                },
+            )
+
+            validation_errors = self._validate_project_file(project_file)
+            tool_mismatch_errors = debug.get("tool_number_mismatches") or []
+            if tool_mismatch_errors:
+                validation_errors.extend(tool_mismatch_errors)
+
+            await self.dao.set_validation_result(
+                vm_project_id,
+                is_valid=(len(validation_errors) == 0),
+                errors=validation_errors,
+                next_status_if_valid="ready",
+                next_status_if_invalid="needs-fix",
+            )
+
+            return {
+                "vm_project_id": str(vm_project_id),
+                "status": "ready" if not validation_errors else "needs-fix",
+                "files": {
+                    "nc_split_zip_id": str(zip_vm_file_id),
+                    "project_json_id": str(prj_vm_file_id),
+                },
+                "validation": {
+                    "is_valid": len(validation_errors) == 0,
+                    "errors": validation_errors,
+                },
+                "debug": debug,
+            }
+
+        finally:
+            if work_dir and os.path.isdir(work_dir):
+                try:
+                    shutil.rmtree(work_dir)
+                except Exception as e:
+                    logger.warning("Failed to cleanup tmp work_dir %s: %s", work_dir, e)
+
+    _DP_NC_CATEGORIES = {"NC", "NCCODE", "nc", "nccode"}
+
+    @classmethod
+    def _match_dt_file_dp(
+        cls, info: dict, *, gid: str, eid: str, wpid: Optional[str]
+    ) -> bool:
+        """
+        DP dt_file 매칭. ISO와 달리 DT_ASSET 키에 full URI가 아닌 short ID가 저장되므로
+        DT_GLOBAL_ASSET + DT_PROJECT + WORKPLAN 세 키만 비교한다.
+        category가 NC/NCCODE가 아닌 파일(STEP 등)은 제외한다.
+        """
+        category = (info or {}).get("category") or ""
+        if category not in cls._DP_NC_CATEGORIES:
+            return False
+        refs = (info or {}).get("refs") or {}
+        if (refs.get("DT_GLOBAL_ASSET") or "") != (gid or ""):
+            return False
+        if (refs.get("DT_PROJECT") or "") != (eid or ""):
+            return False
+        if wpid:
+            return (refs.get("WORKPLAN") or "") == wpid
+        return True
+
     def _validate_project_file(self, pf: ProjectFileOut) -> list[str]:
         errors: list[str] = []
 
@@ -938,7 +1291,9 @@ class VmProjectService:
                 VmProjectListItem(
                     id=str(d.get("_id")),
                     status=d.get("status"),
+                    source=d.get("source") or "iso",
                     proj_name=d.get("proj_name"),
+                    display_name=d.get("display_name"),
                     gid=d.get("gid"),
                     aid=d.get("aid"),
                     eid=d.get("eid"),
@@ -987,7 +1342,9 @@ class VmProjectService:
         return VmProjectDetailOut(
             id=str(doc.get("_id")),
             status=doc.get("status"),
+            source=doc.get("source") or "iso",
             proj_name=doc.get("proj_name"),
+            display_name=doc.get("display_name"),
             gid=doc.get("gid"),
             aid=doc.get("aid"),
             eid=doc.get("eid"),
@@ -1034,7 +1391,7 @@ class VmProjectService:
 
         return StockItemsResponse(
             items=[
-                StockItemOut(code=int(it["code"]), name=str(it["name"])) for it in items
+                StockItemOut(code=str(it["code"]), name=str(it["name"])) for it in items
             ]
         )
 
@@ -1176,7 +1533,19 @@ class VmProjectService:
         }
 
     # ==========VM 호출 관련 ==========
-    async def start_vm_job(self, vm_project_id: ObjectId) -> Dict[str, Any]:
+    async def reset_to_ready(self, vm_project_id: ObjectId) -> Dict[str, Any]:
+        ok = await self.dao.reset_failed_to_ready(vm_project_id)
+        if not ok:
+            doc = await self.dao.get(vm_project_id)
+            if not doc:
+                raise HTTPException(404, "vm_project not found")
+            raise HTTPException(
+                400,
+                f"'failed' 상태에서만 리셋할 수 있습니다. 현재 상태: {doc.get('status')}",
+            )
+        return {"vm_project_id": str(vm_project_id), "status": "ready"}
+
+    async def start_vm_job(self, vm_project_id: ObjectId, *, upload_result: bool = True) -> Dict[str, Any]:
         """
         1) status가 ready인지 확인 (아니면 400)
         2) 프로젝트 JSON, NC ZIP을 GridFS에서 꺼내 VM S3 업로드 API로 각각 업로드
@@ -1253,7 +1622,7 @@ class VmProjectService:
         try:
             vm_resp = await self._vm_create_job(
                 token=token,
-                machine_name=str(doc.get("eid") or ""),
+                machine_name=str(doc.get("display_name") or doc.get("eid") or ""),
                 project_s3_path=project_s3_path,
                 nc_s3_path=nc_s3_path,
             )
@@ -1279,11 +1648,12 @@ class VmProjectService:
 
         vm_state = self._extract_state(vm_resp)
 
-        # 5) DB에 job 시작 정보 기록
+        # 5) DB에 job 시작 정보 기록 (upload_result 포함)
         await self.dao.set_vm_job_started(
             vm_project_id,
             vm_job_id=str(vm_job_id),
             vm_state=vm_state,
+            upload_result=upload_result,
         )
 
         return {
@@ -1610,36 +1980,20 @@ class VmProjectService:
         vm_state = self._extract_state(resp)  # 응답 구조가 달라져도 한 곳에서 처리
 
         # ===== 상태 분기 =====
-        if vm_state in ("WAIT", "RUN"):
+        if vm_state in ("WAIT", "RUN", "UPLOADING"):
             # 아직 진행 중 → 계속 running 으로 유지
             new_status = "running"
-
-        elif vm_state in ("ERROR", "ERROR-AppsPro Down"):
-            # 더 이상 폴링 불필요 → failed 로 종료 + 에러메시지 저장
-            new_status = "failed"
-            await self.dao.set_vm_poll_result(
-                vm_project_id,
-                status=new_status,
-                vm_state=vm_state,
-                vm_error_message=vm_state,
-            )
-            return {
-                "vm_project_id": str(vm_project_id),
-                "status": new_status,
-                "vm_state": vm_state,
-            }
 
         elif vm_state == "COMPLETE":
             # VM 결과 ZIP 링크
             result_link = resp.get("download_file_link")
 
             if not result_link:
-                # COMPLETE 라고 했는데 파일 링크가 없으면 우리 쪽에선 실패로 처리
                 await self.dao.set_vm_poll_result(
                     vm_project_id,
                     status="failed",
                     vm_state="ERROR",
-                    vm_error_message=("VM returned COMPLETE but no download_file_link"),
+                    vm_error_message="VM returned COMPLETE but no download_file_link",
                 )
                 return {
                     "vm_project_id": str(vm_project_id),
@@ -1647,14 +2001,59 @@ class VmProjectService:
                     "vm_state": "ERROR",
                 }
 
-            # dt_file XML 생성 및 ISO 업로드
-            await self._create_and_upload_vm_dt_file(doc, result_link)
+            _MAX_DT_FILE_ATTEMPTS = 3
+            current_attempts = (doc.get("vm_dt_file_upload_attempts") or 0) + 1
+            try:
+                await self._create_and_upload_vm_dt_file(doc, result_link)
+                new_status = "completed"
+            except Exception as upload_err:
+                if current_attempts >= _MAX_DT_FILE_ATTEMPTS:
+                    err_msg = f"VM dt_file 플랫폼 업로드 실패 ({current_attempts}/{_MAX_DT_FILE_ATTEMPTS}회 시도): {upload_err}"
+                    logger.error("dt_file upload max retries exceeded: project=%s err=%s", str(vm_project_id), upload_err)
+                    await self.dao.set_vm_poll_result(
+                        vm_project_id,
+                        status="failed",
+                        vm_state=vm_state,
+                        vm_error_message=err_msg,
+                    )
+                    return {
+                        "vm_project_id": str(vm_project_id),
+                        "status": "failed",
+                        "vm_state": vm_state,
+                    }
+                else:
+                    err_msg = f"VM dt_file 업로드 시도 {current_attempts}/{_MAX_DT_FILE_ATTEMPTS} 실패: {upload_err}"
+                    logger.warning("dt_file upload attempt %d failed: project=%s err=%s", current_attempts, str(vm_project_id), upload_err)
+                    await self.dao.set_dt_file_upload_failed(
+                        vm_project_id,
+                        attempts=current_attempts,
+                        message=err_msg,
+                        vm_raw_status=vm_state,
+                    )
+                    return {
+                        "vm_project_id": str(vm_project_id),
+                        "status": "running",
+                        "vm_state": vm_state,
+                    }
 
-            # VM_PROJECT 상태도 completed 로 전환
-            new_status = "completed"
+        elif "ERR" in (vm_state or "").upper():
+            # ERROR, ERROR-AppsPro Down, ERROR-ERR-UNKNOWN, ERR-xxx 등 ERR 포함 전부 failed 처리
+            new_status = "failed"
+            await self.dao.set_vm_poll_result(
+                vm_project_id,
+                status=new_status,
+                vm_state=vm_state,
+                vm_error_message=vm_state,
+            )
+            logger.warning("VM job failed: project=%s vm_state=%s", str(vm_project_id), vm_state)
+            return {
+                "vm_project_id": str(vm_project_id),
+                "status": new_status,
+                "vm_state": vm_state,
+            }
 
         else:
-            # 알 수 없는 상태값이면 일단 running 유지 (로그만 남기고)
+            # 알 수 없는 상태값 → running 유지하고 경고만 기록
             logger.warning(
                 "Unknown VM state '%s' for project %s; keep running",
                 vm_state,
@@ -1683,62 +2082,85 @@ class VmProjectService:
         aid: str,
         eid: str,
         wpid: Optional[str],
+        source: str = "iso",
     ) -> int:
         """
-        동일한 (gid, aid, eid, wpid) 조합으로 이미 등록된 VM dt_file 들을 ISO에서 조회해서
-        SEQ_ID 최댓값 + 1 을 반환한다.
-        - 없으면 1부터 시작.
+        동일한 (gid, aid, eid, wpid) 조합으로 이미 등록된 VM dt_file 들을 조회해서
+        SEQ_ID 최댓값 + 1 을 반환한다. 없으면 1부터 시작.
+        source="dp" 이면 DP API로 조회, 그 외엔 ISO API.
         """
-        pairs = await self._list_dtfile_pairs(gid=gid)
         max_seq = 0
 
-        for aid_try, eid_try in pairs:
-            # 해당 gid 아래의 모든 dt_file 후보 조회
+        if source == "dp":
             try:
-                xml = await self._fetch_dt_file_xml(
-                    eid=eid_try,
-                    gid=gid,
-                    aid=aid_try,
-                )
+                result = await dp_client.list_elements_by_gid(gid)
+                candidates = [
+                    item for item in (result.get("content") or [])
+                    if (item.get("type") or "").lower() == "file"
+                ]
             except Exception:
-                continue
+                candidates = []
 
-            if not xml:
-                continue
-
-            info = parse_dt_file_xml(xml) or {}
-
-            # category 가 "VM" 인 것만 VM 결과로 간주
-            category = str(info.get("category") or "").strip().upper()
-            if category != "VM":
-                continue
-
-            # 참조 키( DT_GLOBAL_ASSET / DT_ASSET / DT_PROJECT / WORKPLAN )가
-            # 원본 iso 프로젝트(gid/aid/eid/wp) 와 일치하는지 검사
-            if not match_dt_file_refs(
-                info,
-                gid=gid,
-                aid=aid,
-                eid=eid,
-                wpid=wpid,
-            ):
-                continue
-
-            # properties 중 SEQ_ID 값 추출
-            props = info.get("properties") or []
-            for p in props:
-                if not isinstance(p, dict):
-                    continue
-                key = str(p.get("key") or "").strip()
-                if key != "SEQ_ID":
+            for item in candidates:
+                item_aid = item.get("assetId") or ""
+                item_eid = item.get("elementId") or ""
+                if not item_aid or not item_eid:
                     continue
                 try:
-                    v = int(str(p.get("value") or "").strip())
-                except ValueError:
-                    v = None
-                if v is not None and v > max_seq:
-                    max_seq = v
-                break  # 하나 찾으면 그 dt_file 은 더 안 봄
+                    xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
+                except Exception:
+                    continue
+                if not xml:
+                    continue
+                info = parse_dt_file_xml(xml) or {}
+                if str(info.get("category") or "").strip().upper() != "VM":
+                    continue
+                # DP: DT_GLOBAL_ASSET + DT_PROJECT + WORKPLAN으로 매칭 (DT_ASSET 스킵)
+                refs = info.get("refs") or {}
+                if (refs.get("DT_GLOBAL_ASSET") or "") != gid:
+                    continue
+                if (refs.get("DT_PROJECT") or "") != eid:
+                    continue
+                if wpid and (refs.get("WORKPLAN") or "") != wpid:
+                    continue
+                for p in (info.get("properties") or []):
+                    if not isinstance(p, dict):
+                        continue
+                    if str(p.get("key") or "").strip() != "SEQ_ID":
+                        continue
+                    try:
+                        v = int(str(p.get("value") or "").strip())
+                    except ValueError:
+                        v = None
+                    if v is not None and v > max_seq:
+                        max_seq = v
+                    break
+        else:
+            pairs = await self._list_dtfile_pairs(gid=gid)
+            for aid_try, eid_try in pairs:
+                try:
+                    xml = await self._fetch_dt_file_xml(eid=eid_try, gid=gid, aid=aid_try)
+                except Exception:
+                    continue
+                if not xml:
+                    continue
+                info = parse_dt_file_xml(xml) or {}
+                if str(info.get("category") or "").strip().upper() != "VM":
+                    continue
+                if not match_dt_file_refs(info, gid=gid, aid=aid, eid=eid, wpid=wpid):
+                    continue
+                for p in (info.get("properties") or []):
+                    if not isinstance(p, dict):
+                        continue
+                    if str(p.get("key") or "").strip() != "SEQ_ID":
+                        continue
+                    try:
+                        v = int(str(p.get("value") or "").strip())
+                    except ValueError:
+                        v = None
+                    if v is not None and v > max_seq:
+                        max_seq = v
+                    break
 
         return max_seq + 1 if max_seq > 0 else 1
 
@@ -1792,6 +2214,63 @@ class VmProjectService:
 
         return self._safe_json(r)
 
+    @staticmethod
+    async def _stream_download_to_tempfile(url: str) -> str:
+        """
+        URL에서 파일을 스트리밍으로 다운로드해 임시 파일 경로를 반환한다.
+        호출자가 사용 후 반드시 삭제해야 한다.
+        """
+        import tempfile
+        suffix = "." + (url.rstrip("/").split("/")[-1].split(".")[-1] or "zip")
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            async with client.stream("GET", url) as r:
+                r.raise_for_status()
+                with open(tmp_path, "wb") as f:
+                    async for chunk in r.aiter_bytes(chunk_size=4 * 1024 * 1024):
+                        f.write(chunk)
+        return tmp_path
+
+    async def _dp_register_vm_dt_file(
+        self, *, xml_str: str, download_url: Optional[str]
+    ) -> Any:
+        """
+        DP에 VM 결과 dt_file 등록.
+
+        download_url이 있으면 파일을 스트리밍 다운로드 후 DP에 파일+XML 함께 업로드.
+        download_url이 None이면 XML(링크 포함)만 업로드.
+        임시 파일은 finally에서 반드시 삭제한다.
+        """
+        if download_url is None:
+            # 파일 첨부 없이 XML(링크)만 등록 → /asset/xml 사용
+            # /asset/xml-with-file 은 파일 첨부가 없으면 서버에서 400 반환
+            try:
+                return await dp_client.upload_xml(xml_str)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"DP vm dt_file 등록 실패: {e}")
+
+        tmp_path = None
+        try:
+            tmp_path = await self._stream_download_to_tempfile(download_url)
+            logger.info("VM 결과 임시 저장 완료: %s (%d bytes)", tmp_path, os.path.getsize(tmp_path))
+
+            file_name = download_url.rstrip("/").split("/")[-1] or "vm_result.zip"
+            if not file_name.endswith(".zip"):
+                file_name += ".zip"
+
+            return await dp_client.upload_xml_with_file(
+                xml_str, file_path=tmp_path, file_name=file_name
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"DP vm dt_file 등록 실패: {e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                logger.info("VM 결과 임시 파일 삭제: %s", tmp_path)
+
     async def _create_and_upload_vm_dt_file(
         self,
         vm_project_doc: dict,
@@ -1802,12 +2281,14 @@ class VmProjectService:
         1) 기존 VM dt_file 들을 보고 다음 SEQ_ID 계산
         2) vm_aid / vm_eid 규칙(vm_001, vm_002...) 결정
         3) make_vm_dt_file_xml 로 XML 생성
-        4) ISO에 dt_file 등록
+        4) source에 따라 ISO 또는 DP에 dt_file 등록
         """
         gid = vm_project_doc.get("gid")
         aid = vm_project_doc.get("aid")
         eid = vm_project_doc.get("eid")
         wpid = vm_project_doc.get("wpid")
+        source = vm_project_doc.get("source") or "iso"
+        upload_result = vm_project_doc.get("upload_result", True)
 
         if not (gid and aid and eid):
             raise HTTPException(
@@ -1815,23 +2296,26 @@ class VmProjectService:
                 detail="vm_project has no gid/aid/eid for vm dt_file",
             )
 
-        # 1) 기존 VM dt_file 들에서 SEQ_ID 최댓값 + 1 계산
+        # 1) 기존 VM dt_file 들에서 SEQ_ID 최댓값 + 1 계산 (source에 따라 조회 API 분기)
         seq_id = await self._compute_next_vm_seq_id(
             gid=gid,
             aid=aid,
             eid=eid,
             wpid=wpid,
+            source=source,
         )
 
         # 2) vm aid/eid 규칙: vm_001, vm_002 ... (SEQ_ID와 통일)
         vm_aid = f"vm_{seq_id:03d}"
-        vm_eid = vm_aid  # eid = asset_id 와 동일
+        vm_eid = vm_aid
 
-        # 3) XML 생성 (xml_parser.make_vm_dt_file_xml 사용)
+        # 3) XML 생성
+        # upload_result=True: 파일 직접 업로드 → <path>는 빈값 (플랫폼이 자동 채움)
+        # upload_result=False: 링크만 저장 → <path>에 download_link 삽입
         xml_str = make_vm_dt_file_xml(
             asset_global_id=gid,
             vm_asset_id=vm_aid,
-            download_file_link=download_link,
+            download_file_link="" if upload_result else download_link,
             gid=gid,
             aid=aid,
             eid=eid,
@@ -1839,10 +2323,21 @@ class VmProjectService:
             seq_id=seq_id,
         )
 
-        # 4) ISO 등록
-        await self._iso_register_vm_dt_file(
-            gid=gid,
-            vm_aid=vm_aid,
-            vm_eid=vm_eid,
-            xml_str=xml_str,
-        )
+        # 4) 등록
+        if source == "dp":
+            if upload_result:
+                # 파일 다운로드 후 DP에 직접 업로드
+                await self._dp_register_vm_dt_file(xml_str=xml_str, download_url=download_link)
+            else:
+                # 링크만 XML에 넣어 DP에 등록
+                await self._dp_register_vm_dt_file(xml_str=xml_str, download_url=None)
+            logger.info(
+                "DP vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_result=%s",
+                gid, vm_aid, seq_id, upload_result,
+            )
+        else:
+            await self._iso_register_vm_dt_file(gid=gid, vm_aid=vm_aid, vm_eid=vm_eid, xml_str=xml_str)
+            logger.info(
+                "ISO vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_result=%s",
+                gid, vm_aid, seq_id, upload_result,
+            )
