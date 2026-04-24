@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520" role="img" aria-labelledby="title desc">
+  <title id="title">Cutting Tools APT Guide</title>
+  <desc id="desc">A cutting tool guide with field descriptions and a tool geometry sketch.</desc>
+  <rect width="920" height="520" rx="24" fill="#ffffff"/>
+  <rect x="18" y="18" width="884" height="484" rx="20" fill="#f8fafc" stroke="#d9e0ea" stroke-width="2"/>
+
+  <text x="48" y="78" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700" fill="#101828">
+    Cutting Tools APT
+  </text>
+
+  <g font-family="Inter, Arial, sans-serif" font-size="22" fill="#27364a">
+    <text x="48" y="142"><tspan font-weight="700">Dia</tspan><tspan dx="10">cutter diameter</tspan></text>
+    <text x="48" y="194"><tspan font-weight="700">Rad</tspan><tspan dx="10">cutter radius</tspan></text>
+    <text x="48" y="246"><tspan font-weight="700">eDis</tspan><tspan dx="10">radial corner offset</tspan></text>
+    <text x="48" y="298"><tspan font-weight="700">fDis</tspan><tspan dx="10">axial corner offset</tspan></text>
+
+    <text x="396" y="142"><tspan font-weight="700">bangl</tspan><tspan dx="10">tip angle</tspan></text>
+    <text x="396" y="194"><tspan font-weight="700">sangl</tspan><tspan dx="10">flank angle</tspan></text>
+    <text x="396" y="246"><tspan font-weight="700">Len</tspan><tspan dx="10">cutter height</tspan></text>
+    <text x="396" y="298"><tspan font-weight="700">flut</tspan><tspan dx="10">flut number</tspan></text>
+  </g>
+
+  <g transform="translate(610 86)">
+    <rect x="0" y="0" width="250" height="310" rx="18" fill="#ffffff" stroke="#d9e0ea" stroke-width="2"/>
+
+    <path d="M130 32
+             C162 52 180 98 180 152
+             C180 214 150 252 142 275
+             C138 287 126 295 113 295
+             C100 295 88 287 84 275
+             C76 252 46 214 46 152
+             C46 98 64 52 96 32"
+          fill="#eef2f7" stroke="#344054" stroke-width="3"/>
+
+    <path d="M92 38
+             C104 58 121 70 130 90
+             C139 70 156 58 168 38"
+          fill="none" stroke="#344054" stroke-width="3"/>
+
+    <path d="M88 266
+             C106 246 124 236 144 228"
+          fill="none" stroke="#475467" stroke-width="3"/>
+    <path d="M108 270
+             C122 246 144 228 166 220"
+          fill="none" stroke="#475467" stroke-width="3"/>
+
+    <line x1="22" y1="152" x2="228" y2="152" stroke="#98a2b3" stroke-width="2" stroke-dasharray="7 7"/>
+    <line x1="130" y1="18" x2="130" y2="295" stroke="#98a2b3" stroke-width="2" stroke-dasharray="7 7"/>
+    <line x1="130" y1="152" x2="188" y2="152" stroke="#98a2b3" stroke-width="2" stroke-dasharray="7 7"/>
+
+    <path d="M130 152 A54 54 0 0 1 179 200" fill="none" stroke="#344054" stroke-width="3"/>
+    <text x="162" y="182" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" fill="#344054">R</text>
+
+    <line x1="60" y1="314" x2="198" y2="314" stroke="#344054" stroke-width="2"/>
+    <line x1="60" y1="306" x2="60" y2="322" stroke="#344054" stroke-width="2"/>
+    <line x1="198" y1="306" x2="198" y2="322" stroke="#344054" stroke-width="2"/>
+    <text x="124" y="348" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" fill="#344054">D</text>
+
+    <line x1="24" y1="42" x2="24" y2="152" stroke="#344054" stroke-width="2"/>
+    <line x1="16" y1="42" x2="32" y2="42" stroke="#344054" stroke-width="2"/>
+    <line x1="16" y1="152" x2="32" y2="152" stroke="#344054" stroke-width="2"/>
+    <text x="2" y="102" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054" transform="rotate(-90 2 102)">hcu</text>
+
+    <line x1="214" y1="92" x2="214" y2="295" stroke="#344054" stroke-width="2"/>
+    <line x1="206" y1="92" x2="222" y2="92" stroke="#344054" stroke-width="2"/>
+    <line x1="206" y1="295" x2="222" y2="295" stroke="#344054" stroke-width="2"/>
+    <text x="238" y="198" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054" transform="rotate(-90 238 198)">h</text>
+
+    <text x="105" y="118" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054">A</text>
+    <text x="170" y="125" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054">B</text>
+    <text x="166" y="271" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054">P</text>
+    <text x="120" y="188" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#344054">O</text>
+  </g>
+</svg>

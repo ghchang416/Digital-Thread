@@ -16,15 +16,24 @@ def _base() -> str:
     return str(settings.DP_API_URL).rstrip("/")
 
 
-async def list_projects(*, page: int = 0, size: int = 20) -> Dict[str, Any]:
+async def list_projects(
+    *,
+    page: int = 0,
+    size: int = 20,
+    all_search: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     GET /openapi/v2/asset/find/element?type=project&page={page}&size={size}
     반환: { typeCounts, content[], pageable, totalElements, totalPages, ... }
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
+        params: Dict[str, Any] = {"type": "project", "page": page, "size": size}
+        if all_search:
+            params["allSearch"] = all_search
+
         r = await client.get(
             f"{_base()}/openapi/v2/asset/find/element",
-            params={"type": "project", "page": page, "size": size},
+            params=params,
             headers=_dp_headers(),
         )
         r.raise_for_status()
@@ -150,3 +159,21 @@ async def download_nc_file(path: str) -> str:
             return r.text
         except Exception:
             return r.content.decode("utf-8", errors="ignore")
+
+
+async def download_user_file_bytes(path: str) -> tuple[bytes, Optional[str]]:
+    """
+    GET /openapi/v2/files/download/userdata?path={path}
+    path: element 응답의 'path' 필드 값
+    반환: (파일 bytes, response content-type)
+
+    NC 텍스트 다운로드 흐름은 건드리지 않기 위해 이미지/바이너리용 별도 함수로 둔다.
+    """
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        r = await client.get(
+            f"{_base()}/openapi/v2/files/download/userdata",
+            params={"path": path},
+            headers=_dp_headers(),
+        )
+        r.raise_for_status()
+        return r.content, r.headers.get("content-type")

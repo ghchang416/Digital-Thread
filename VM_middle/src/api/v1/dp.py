@@ -1,12 +1,14 @@
 # src/api/v1/dp.py
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from src.schemas.vm_project import (
     DpProjectListResponse,
     DpProjectItem,
     DpWorkplanListResponse,
     DpWorkplanItem,
 )
+from src.services.vm_project import VmProjectService
+from src.database import get_vm_project_service
 import src.clients.dp as dp_client
 from src.utils.xml_parser import extract_vm_workplans
 
@@ -17,12 +19,13 @@ router = APIRouter(prefix="/dp", tags=["dp"])
 async def list_dp_projects(
     page: int = Query(0, ge=0, description="페이지 (0-base)"),
     size: int = Query(20, ge=1, le=100, description="페이지 크기"),
+    q: str | None = Query(None, description="DP 프로젝트 검색어 (allSearch)"),
 ):
     """
     DP에 등록된 프로젝트 목록을 조회합니다.
     """
     try:
-        data = await dp_client.list_projects(page=page, size=size)
+        data = await dp_client.list_projects(page=page, size=size, all_search=q)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"DP API 호출 실패: {e}")
 
@@ -74,3 +77,21 @@ async def list_dp_workplans(
         eid=eid,
         workplans=[DpWorkplanItem(**wp) for wp in wp_list],
     )
+
+
+@router.get("/projects/thumbnail", summary="DP 원본 프로젝트 썸네일 이미지")
+async def get_dp_project_thumbnail(
+    gid: str = Query(..., description="DP assetGlobalId (URL)"),
+    aid: str = Query(..., description="DP assetId (full URI)"),
+    eid: str = Query(..., description="DP elementId"),
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    """
+    DP 원본 프로젝트 선택 단계에서 사용할 TITLE_IMAGE 썸네일 이미지를 반환합니다.
+    """
+    content, media_type = await svc.get_dp_project_thumbnail(
+        gid=gid,
+        aid=aid,
+        eid=eid,
+    )
+    return Response(content=content, media_type=media_type)

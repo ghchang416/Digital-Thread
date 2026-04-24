@@ -18,6 +18,8 @@ from src.core.config import settings
 from src.dao.vm_project import VmProjectDAO
 from src.schemas.vm_project import (
     ProcessItemIn,
+    ProcessAnnotationItemOut,
+    ProcessAnnotationsResponse,
     ProcessPatchIn,
     ProjectFileOut,
     StockInfo,
@@ -309,6 +311,50 @@ class VmProjectService:
             process=procs,
         )
 
+    @staticmethod
+    def _normalize_project_file_dict(data: Mapping[str, Any] | None) -> dict[str, Any]:
+        """
+        레거시 project_file_draft 호환용 정규화.
+        - stock_type이 숫자형으로 저장된 예전 문서를 문자열로 변환
+        """
+        normalized = dict(data or {})
+        stock_type = normalized.get("stock_type")
+        if isinstance(stock_type, (int, float)) and not isinstance(stock_type, bool):
+            normalized["stock_type"] = str(int(stock_type))
+        return normalized
+
+    @staticmethod
+    def _build_process_annotations(ws_refs: list[dict]) -> list[dict]:
+        return [
+            {
+                "index": idx,
+                "workingstep_id": w.get("ws_id"),
+                "tool_element_id": w.get("tool_element_id") or w.get("eid"),
+            }
+            for idx, w in enumerate(ws_refs)
+        ]
+
+    async def _rebuild_process_annotations_from_source(self, doc: dict) -> list[dict]:
+        source = str(doc.get("source") or "iso").strip().lower()
+        gid = str(doc.get("gid") or "").strip()
+        aid = str(doc.get("aid") or "").strip()
+        eid = str(doc.get("eid") or "").strip()
+        wpid = doc.get("wpid")
+
+        if not gid or not aid or not eid:
+            return []
+
+        if source == "dp":
+            proj_xml = await dp_client.get_element_xml(aid=aid, eid=eid)
+        else:
+            proj_xml = await self._fetch_project_xml(eid=eid, gid=gid, aid=aid)
+
+        if not proj_xml:
+            return []
+
+        ws_refs = extract_tool_refs_in_order(proj_xml, wpid)
+        return self._build_process_annotations(ws_refs)
+
     # ---------------- DB 초안 생성/조회/패치 ----------------
     async def create_from_iso(
         self, payload: VmProjectCreateIn
@@ -335,8 +381,27 @@ class VmProjectService:
             return ProjectFileOut(**merged)
         # 기본: draft
         doc = await self.dao.get(_id)
-        pf = (doc or {}).get("project_file_draft") or {}
+        pf = self._normalize_project_file_dict(
+            (doc or {}).get("project_file_draft") or {}
+        )
         return ProjectFileOut(**pf)
+
+    async def get_process_annotations(
+        self, _id: ObjectId
+    ) -> ProcessAnnotationsResponse:
+        doc = await self.dao.get(_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="vm_project not found")
+
+        items = doc.get("process_annotations") or []
+        if not items:
+            items = await self._rebuild_process_annotations_from_source(doc)
+            if items:
+                await self.dao.update_process_annotations(_id, items)
+
+        return ProcessAnnotationsResponse(
+            items=[ProcessAnnotationItemOut(**item) for item in items]
+        )
 
     async def patch_stock(self, _id: ObjectId, patch: StockPatchIn) -> ProjectFileOut:
         # --- 0) 스톡 코드 사전 검증: 미정의 코드면 차단 ---
@@ -351,7 +416,9 @@ class VmProjectService:
 
         # 🔽 상태 체크 (ready / needs-fix만 허용)
         doc = await self._ensure_editable_status(_id)
-        pf = (doc or {}).get("project_file_draft") or {}
+        pf = self._normalize_project_file_dict(
+            (doc or {}).get("project_file_draft") or {}
+        )
 
         # --- DB 초안: stock 필드만 교체 ---
         changed: dict[str, object] = {}
@@ -389,7 +456,9 @@ class VmProjectService:
     ) -> ProjectFileOut:
         # 🔽 상태 체크 (ready / needs-fix만 허용)
         doc = await self._ensure_editable_status(_id)
-        pf = (doc or {}).get("project_file_draft") or {}
+        pf = self._normalize_project_file_dict(
+            (doc or {}).get("project_file_draft") or {}
+        )
 
         # --- DB 초안: process 필드만 교체 ---
         new_list = [p.model_dump() for p in patch.process]
@@ -479,6 +548,7 @@ class VmProjectService:
         ws_refs = extract_tool_refs_in_order(
             proj_xml, wpid=payload.wpid
         )  # [{gid, aid, eid, tool_element_id, ...}]
+        debug["process_annotations"] = self._build_process_annotations(ws_refs)
         if payload.wpid:
             wp_id = re.escape(payload.wpid)
             main_hit = re.search(
@@ -806,6 +876,7 @@ class VmProjectService:
         proj_name = debug.get("proj_name")
         display_name = debug.get("display_name")
         dtfile_meta = debug.get("dt_file") or {}
+        process_annotations = debug.get("process_annotations") or []
         work_dir = debug.get("work_dir")  # 👈 tmp/<proj_name>
 
         try:
@@ -817,6 +888,7 @@ class VmProjectService:
                 eid=payload.eid,
                 wpid=payload.wpid,
                 project_file_draft=project_file.model_dump(),
+                process_annotations=process_annotations,
                 proj_name=proj_name,
                 display_name=display_name,
             )
@@ -928,6 +1000,7 @@ class VmProjectService:
         # 2) WS 추출
         ws_refs = extract_tool_refs_in_order(proj_xml, wpid=payload.wpid)
         debug["ws_count"] = len(ws_refs)
+        debug["process_annotations"] = self._build_process_annotations(ws_refs)
 
         # 3) 소재 크기: project XML에서 직접 추출 (예외 없음)
         bounds = extract_stock_bounds_from_project_xml(proj_xml)
@@ -1123,6 +1196,7 @@ class VmProjectService:
         proj_name = debug.get("proj_name")
         display_name = debug.get("display_name")
         dtfile_meta = debug.get("dt_file") or {}
+        process_annotations = debug.get("process_annotations") or []
         work_dir = debug.get("work_dir")
 
         try:
@@ -1133,6 +1207,7 @@ class VmProjectService:
                 eid=payload.eid,
                 wpid=payload.wpid,
                 project_file_draft=project_file.model_dump(),
+                process_annotations=process_annotations,
                 proj_name=proj_name,
                 display_name=display_name,
             )
@@ -1215,6 +1290,7 @@ class VmProjectService:
                     logger.warning("Failed to cleanup tmp work_dir %s: %s", work_dir, e)
 
     _DP_NC_CATEGORIES = {"NC", "NCCODE", "nc", "nccode"}
+    _DP_TITLE_IMAGE_CATEGORY = "TITLE_IMAGE"
 
     @classmethod
     def _match_dt_file_dp(
@@ -1236,6 +1312,197 @@ class VmProjectService:
         if wpid:
             return (refs.get("WORKPLAN") or "") == wpid
         return True
+
+    @staticmethod
+    def _dp_asset_ref_matches(ref_aid: str | None, project_aid: str | None) -> bool:
+        """
+        DP dt_file reference의 DT_ASSET은 short id와 full URI가 섞일 수 있어
+        full match 또는 마지막 path segment match를 모두 허용한다.
+        """
+        ref = (ref_aid or "").strip()
+        project = (project_aid or "").strip()
+        if not ref or not project:
+            return True
+        if ref == project:
+            return True
+        return ref == project.rstrip("/").split("/")[-1]
+
+    @classmethod
+    def _match_dp_title_image(
+        cls, info: dict, *, gid: str, aid: str, eid: str
+    ) -> bool:
+        category = str((info or {}).get("category") or "").strip().upper()
+        if category != cls._DP_TITLE_IMAGE_CATEGORY:
+            return False
+        refs = (info or {}).get("refs") or {}
+        if (refs.get("DT_GLOBAL_ASSET") or "") != (gid or ""):
+            return False
+        if (refs.get("DT_PROJECT") or "") != (eid or ""):
+            return False
+        return cls._dp_asset_ref_matches(refs.get("DT_ASSET"), aid)
+
+    @staticmethod
+    def _parse_dp_datetime(value: Any) -> float:
+        if not isinstance(value, str) or not value.strip():
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.strip()).timestamp()
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _is_image_path(value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        return value.lower().split("?", 1)[0].endswith(
+            (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+        )
+
+    @classmethod
+    def _dp_title_image_priority(cls, *, info: dict, item: dict, path: str) -> tuple:
+        """
+        TITLE_IMAGE 후보가 여러 개일 때 대표 썸네일을 안정적으로 고르기 위한 정렬 키.
+
+        우선순위:
+        1) content_type이 image/*인 후보
+        2) content_type이 없지만 path/display_name이 이미지 확장자인 후보
+        3) updateDate 최신
+        4) createDate 최신
+        5) assetSeq 큰 값
+        6) elementId 사전순
+        """
+        content_type = str(info.get("content_type") or "").strip().lower()
+        display_name = info.get("display_name") or item.get("displayName")
+
+        image_score = 0
+        if content_type.startswith("image/"):
+            image_score = 2
+        elif cls._is_image_path(path) or cls._is_image_path(display_name):
+            image_score = 1
+
+        try:
+            asset_seq = int(item.get("assetSeq") or 0)
+        except (TypeError, ValueError):
+            asset_seq = 0
+
+        return (
+            image_score,
+            cls._parse_dp_datetime(item.get("updateDate")),
+            cls._parse_dp_datetime(item.get("createDate")),
+            asset_seq,
+            str(item.get("elementId") or info.get("element_id") or ""),
+        )
+
+    async def get_dp_project_thumbnail(
+        self, *, gid: str, aid: str, eid: str
+    ) -> tuple[bytes, str]:
+        """
+        DP 원본 프로젝트(gid/aid/eid)의 TITLE_IMAGE 썸네일을 반환한다.
+        생성 wizard에서 DP 프로젝트 선택 단계에서 사용한다.
+        """
+        if not (gid and aid and eid):
+            raise HTTPException(status_code=404, detail="thumbnail not available")
+
+        try:
+            gid_elements = await dp_client.list_elements_by_gid(gid)
+        except Exception as e:
+            raise HTTPException(
+                status_code=502, detail=f"DP element 목록 조회 실패: {e}"
+            )
+
+        candidates: list[dict[str, Any]] = []
+
+        for item in gid_elements.get("content") or []:
+            if not isinstance(item, dict):
+                continue
+
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type and item_type not in {"file", "dt_file"}:
+                continue
+
+            item_aid = item.get("assetId") or item.get("aid") or ""
+            item_eid = item.get("elementId") or item.get("eid") or ""
+            if not item_aid or not item_eid:
+                continue
+
+            try:
+                xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
+            except Exception:
+                continue
+            if not xml:
+                continue
+
+            info = parse_dt_file_xml(xml) or {}
+            if not self._match_dp_title_image(info, gid=gid, aid=aid, eid=eid):
+                continue
+
+            path = info.get("path") or item.get("path")
+            if not path:
+                continue
+
+            content_type = str(info.get("content_type") or "").strip().lower()
+            if content_type and not content_type.startswith("image/"):
+                continue
+
+            candidates.append(
+                {
+                    "item": item,
+                    "info": info,
+                    "path": path,
+                    "priority": self._dp_title_image_priority(
+                        info=info, item=item, path=path
+                    ),
+                }
+            )
+
+        last_download_error: Exception | None = None
+        for candidate in sorted(
+            candidates, key=lambda c: c["priority"], reverse=True
+        ):
+            info = candidate["info"]
+            path = candidate["path"]
+
+            try:
+                content, response_content_type = (
+                    await dp_client.download_user_file_bytes(path)
+                )
+            except Exception as e:
+                last_download_error = e
+                continue
+
+            media_type = (
+                info.get("content_type")
+                or response_content_type
+                or "application/octet-stream"
+            )
+            return content, str(media_type).split(";")[0]
+
+        if candidates and last_download_error is not None:
+            raise HTTPException(
+                status_code=502,
+                detail=f"DP thumbnail 다운로드 실패: {last_download_error}",
+            )
+
+        raise HTTPException(status_code=404, detail="thumbnail not found")
+
+    async def get_thumbnail(self, _id: ObjectId) -> tuple[bytes, str]:
+        """
+        VM 프로젝트 썸네일을 반환한다.
+        현재는 DP source만 지원하며, 기존 VM 생성/NC 매칭 경로와 독립적으로 동작한다.
+        """
+        doc = await self.dao.get(_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="vm_project not found")
+
+        source = (doc.get("source") or "iso").strip().lower()
+        if source != "dp":
+            raise HTTPException(status_code=404, detail="thumbnail not available")
+
+        return await self.get_dp_project_thumbnail(
+            gid=doc.get("gid") or "",
+            aid=doc.get("aid") or "",
+            eid=doc.get("eid") or "",
+        )
 
     def _validate_project_file(self, pf: ProjectFileOut) -> list[str]:
         errors: list[str] = []
@@ -1330,7 +1597,9 @@ class VmProjectService:
         errors = val.get("errors") or []
         is_valid = val.get("is_valid")
 
-        pf_dict = doc.get("project_file_draft") or {}
+        pf_dict = self._normalize_project_file_dict(
+            doc.get("project_file_draft") or {}
+        )
         project_file = ProjectFileOut(**pf_dict)
 
         # 👇 vm 필드 추출
@@ -1427,7 +1696,9 @@ class VmProjectService:
                 },
             )
 
-        pf_dict = doc.get("project_file_draft") or {}
+        pf_dict = self._normalize_project_file_dict(
+            doc.get("project_file_draft") or {}
+        )
         project_file = ProjectFileOut(**pf_dict)
 
         # 1) VM 시스템에 job 생성
@@ -1449,7 +1720,9 @@ class VmProjectService:
         없으면 DB draft를 기본값으로 사용.
         """
         doc = await self.dao.get(vm_project_id)
-        pf_dict = (doc or {}).get("project_file_draft") or {}
+        pf_dict = self._normalize_project_file_dict(
+            (doc or {}).get("project_file_draft") or {}
+        )
         latest = (doc or {}).get("latest_files") or {}
         vmf_id = latest.get("vm-project-json")
         if not vmf_id:
@@ -1466,7 +1739,7 @@ class VmProjectService:
 
         data = await self.vm_file_svc.filestore.gfs_get_bytes(grid_id)
         try:
-            return json.loads(data.decode("utf-8"))
+            return self._normalize_project_file_dict(json.loads(data.decode("utf-8")))
         except Exception:
             # 파싱 실패 시에도 draft로 폴백
             return dict(pf_dict)

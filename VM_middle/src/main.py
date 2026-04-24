@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from src.core.config import settings
 from src.core import db
 from src.api.v1.iso import router as iso_router
@@ -66,3 +69,7 @@ async def healthz():
 app.include_router(iso_router, prefix="/api/v1")
 app.include_router(vm_project_router, prefix="/api/v1")
 app.include_router(dp_router, prefix="/api/v1")
+
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/ui", StaticFiles(directory=str(frontend_dir), html=True), name="vm-ui")

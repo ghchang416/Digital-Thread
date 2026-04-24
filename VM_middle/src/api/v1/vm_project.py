@@ -1,11 +1,12 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from bson import ObjectId
 from src.schemas.vm_project import (
     VmProjectCreateIn,
     StartVmIn,
     CreateFromIsoOut,
     ProjectFileOut,
+    ProcessAnnotationsResponse,
     StockPatchIn,
     ProcessPatchIn,
     PreviewFromIsoOut,
@@ -77,6 +78,21 @@ async def get_vm_project_detail(
     svc: VmProjectService = Depends(get_vm_project_service),
 ):
     return await svc.get_detail(ObjectId(vm_project_id))
+
+
+@router.get("/{vm_project_id}/thumbnail", summary="VM 프로젝트 썸네일 이미지")
+async def get_vm_project_thumbnail(
+    vm_project_id: str,
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    """
+    VM 프로젝트 썸네일 이미지를 반환합니다.
+
+    - DP source: 같은 gid 아래 `TITLE_IMAGE` dt_file을 찾아 path 기반으로 파일 다운로드
+    - ISO source 또는 이미지 없음: 404
+    """
+    content, media_type = await svc.get_thumbnail(ObjectId(vm_project_id))
+    return Response(content=content, media_type=media_type)
 
 
 @router.post("/{vm_project_id}/poll")
@@ -159,6 +175,23 @@ async def get_project_file(
             return await svc.get_project_file(ObjectId(vm_project_id))
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"프로젝트 파일 조회 실패: {e}")
+
+
+@router.get(
+    "/{vm_project_id}/process-annotations",
+    response_model=ProcessAnnotationsResponse,
+    summary="프로세스 보조 메타데이터 조회",
+)
+async def get_process_annotations(
+    vm_project_id: str = Path(..., description="vm_project _id"),
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    try:
+        return await svc.get_process_annotations(ObjectId(vm_project_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"process annotations 조회 실패: {e}")
 
 
 @router.patch("/{vm_project_id}/project-file/stock", response_model=ProjectFileOut)

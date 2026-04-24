@@ -94,6 +94,20 @@ class ProjectFileOut(BaseModel):
     process: List[ProcessItemIn]
 
 
+class ProcessAnnotationItemOut(BaseModel):
+    index: int = Field(description="project_file_draft.process 와 매칭되는 0-base index")
+    workingstep_id: Optional[str] = Field(
+        None, description="해당 process가 대응하는 workingstep its_id"
+    )
+    tool_element_id: Optional[str] = Field(
+        None, description="workingstep 에서 참조한 tool element_id"
+    )
+
+
+class ProcessAnnotationsResponse(BaseModel):
+    items: List[ProcessAnnotationItemOut]
+
+
 class CreateFromIsoOut(BaseModel):
     id: str
     stock: StockInfo

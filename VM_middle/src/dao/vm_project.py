@@ -34,6 +34,7 @@ class VmProjectDAO:
         wpid: Optional[str],
         source: str = "iso",
         project_file_draft: Optional[dict] = None,
+        process_annotations: Optional[list[dict]] = None,
         proj_name: Optional[str] = None,
         display_name: Optional[str] = None,
     ) -> ObjectId:
@@ -46,6 +47,7 @@ class VmProjectDAO:
             "status": "ready",  # 이후 validation으로 ready/needs-fix 덮임
             "latest_files": {},
             "project_file_draft": project_file_draft or {},
+            "process_annotations": process_annotations or [],
             "proj_name": proj_name,
             "display_name": display_name,
             "validation": {"is_valid": None, "errors": [], "updated_at": _now_iso()},
@@ -119,6 +121,7 @@ class VmProjectDAO:
         eid: str,
         wpid: Optional[str],
         project_file_draft: dict,
+        process_annotations: Optional[list[dict]] = None,
     ) -> ObjectId:
         doc = {
             "source": source,
@@ -129,6 +132,7 @@ class VmProjectDAO:
             "status": "ready",  # 이후 validation으로 ready/needs-fix 덮임
             "latest_files": {},
             "project_file_draft": project_file_draft or {},
+            "process_annotations": process_annotations or [],
             "proj_name": None,
             "validation": {"is_valid": None, "errors": [], "updated_at": _now_iso()},
             # 👇 VM 시스템 연동용 필드들 (나열형, 최소 정보만)
@@ -148,6 +152,19 @@ class VmProjectDAO:
         await self.col.update_one(
             {"_id": _id},
             {"$set": {"project_file_draft": project_file, "updated_at": _now_iso()}},
+        )
+
+    async def update_process_annotations(
+        self, _id: ObjectId, annotations: list[dict]
+    ) -> None:
+        await self.col.update_one(
+            {"_id": _id},
+            {
+                "$set": {
+                    "process_annotations": annotations,
+                    "updated_at": _now_iso(),
+                }
+            },
         )
 
     async def list_projects(

@@ -1,0 +1,1205 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VM Middle Frontend Mockup</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --surface-soft: #f9fafb;
+        --line: #d9dee7;
+        --line-strong: #bac4d3;
+        --text: #111827;
+        --muted: #667085;
+        --muted-2: #8a94a6;
+        --green: #087443;
+        --green-bg: #e8f6ef;
+        --amber: #a15c07;
+        --amber-bg: #fff2d6;
+        --red: #b42318;
+        --red-bg: #fde7e7;
+        --blue: #175cd3;
+        --blue-bg: #e8f0ff;
+        --ink: #27364a;
+        --focus: #2f6fed;
+        --shadow: 0 12px 28px rgba(18, 31, 53, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        color: var(--text);
+        background: var(--bg);
+        font-family:
+          Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .topbar {
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 24px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 220px;
+      }
+
+      .brand-mark {
+        width: 32px;
+        height: 32px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        color: var(--ink);
+        background: #eef2f7;
+      }
+
+      .brand-title {
+        display: grid;
+        gap: 2px;
+      }
+
+      .brand-title strong {
+        font-size: 15px;
+      }
+
+      .brand-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 280px minmax(420px, 1fr) 460px;
+        min-height: 0;
+      }
+
+      .panel {
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .left-panel {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+      }
+
+      .center-panel {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        background: var(--surface-soft);
+      }
+
+      .right-panel {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        border-right: 0;
+      }
+
+      .section-head {
+        padding: 18px 18px 14px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 10px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 750;
+        line-height: 1.2;
+      }
+
+      h1 {
+        font-size: 18px;
+      }
+
+      h2 {
+        font-size: 16px;
+      }
+
+      h3 {
+        font-size: 14px;
+      }
+
+      .subtle {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .input,
+      .select,
+      .textarea {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: #ffffff;
+        color: var(--text);
+        min-height: 36px;
+        padding: 8px 10px;
+        outline: none;
+      }
+
+      .input:focus,
+      .select:focus,
+      .textarea:focus {
+        border-color: var(--focus);
+        box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.14);
+      }
+
+      .textarea {
+        min-height: 72px;
+        resize: vertical;
+        line-height: 1.45;
+      }
+
+      .btn {
+        min-height: 36px;
+        padding: 8px 12px;
+        border-radius: 7px;
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 650;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        white-space: nowrap;
+      }
+
+      .btn.primary {
+        color: #ffffff;
+        background: var(--blue);
+        border-color: var(--blue);
+      }
+
+      .btn.success {
+        color: #ffffff;
+        background: var(--green);
+        border-color: var(--green);
+      }
+
+      .btn.danger {
+        color: var(--red);
+        border-color: #f1b7b4;
+        background: #fffafa;
+      }
+
+      .btn:disabled {
+        color: var(--muted-2);
+        background: #eef1f5;
+        border-color: #dce2ea;
+        cursor: not-allowed;
+      }
+
+      .segmented {
+        display: inline-grid;
+        grid-auto-flow: column;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        overflow: hidden;
+        background: #ffffff;
+      }
+
+      .segment {
+        border: 0;
+        border-right: 1px solid var(--line);
+        background: transparent;
+        padding: 8px 12px;
+        min-height: 34px;
+        color: var(--muted);
+        font-weight: 650;
+      }
+
+      .segment:last-child {
+        border-right: 0;
+      }
+
+      .segment.active {
+        color: var(--blue);
+        background: var(--blue-bg);
+      }
+
+      .preview-area {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .image-frame {
+        aspect-ratio: 4 / 3;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(135deg, rgba(47, 111, 237, 0.08), transparent 45%),
+          #f4f6f9;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .image-frame.no-image {
+        background:
+          linear-gradient(90deg, transparent 24%, rgba(17, 24, 39, 0.04) 25%, transparent 26%),
+          linear-gradient(0deg, transparent 24%, rgba(17, 24, 39, 0.04) 25%, transparent 26%),
+          #f8fafc;
+        background-size: 28px 28px;
+      }
+
+      .image-label {
+        display: grid;
+        gap: 6px;
+        text-align: center;
+        padding: 16px;
+      }
+
+      .image-label strong {
+        font-size: 14px;
+      }
+
+      .image-label span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .stock-box {
+        width: 145px;
+        height: 92px;
+        border: 1px solid #8290a3;
+        transform: skew(-14deg);
+        background:
+          linear-gradient(135deg, rgba(8, 116, 67, 0.18), rgba(47, 111, 237, 0.08)),
+          #edf3f2;
+        box-shadow: 22px 18px 0 rgba(76, 91, 112, 0.16);
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #ffffff;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 13px;
+      }
+
+      .wizard {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+        overflow: auto;
+      }
+
+      .stepper {
+        display: grid;
+        gap: 10px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .step-num {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #edf2f7;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .step.active .step-num {
+        background: var(--blue);
+        color: #ffffff;
+        border-color: var(--blue);
+      }
+
+      .step-body {
+        display: grid;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .compact-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .compact-row {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 10px;
+        display: grid;
+        gap: 5px;
+      }
+
+      .compact-row.selected {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.1);
+      }
+
+      .content-head {
+        padding: 18px 20px 14px;
+        display: grid;
+        gap: 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .content-title-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .content-title {
+        display: grid;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .title-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .filters {
+        display: grid;
+        grid-template-columns: minmax(160px, 1fr) 132px 112px auto;
+        gap: 8px;
+      }
+
+      .status-tabs {
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--line);
+        background: #ffffff;
+        display: flex;
+        gap: 8px;
+        overflow: auto;
+      }
+
+      .status-tab {
+        min-height: 32px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--muted);
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .status-tab.active {
+        color: var(--ink);
+        background: #eef2f7;
+        border-color: var(--line-strong);
+      }
+
+      .project-list {
+        overflow: auto;
+        padding: 14px 20px 20px;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+      }
+
+      .project-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: 0 2px 8px rgba(18, 31, 53, 0.03);
+      }
+
+      .project-row.selected {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.1);
+      }
+
+      .row-main {
+        min-width: 0;
+        display: grid;
+        gap: 8px;
+      }
+
+      .row-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .row-title strong {
+        overflow-wrap: anywhere;
+      }
+
+      .row-meta {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .meta-item {
+        min-width: 0;
+      }
+
+      .meta-item span {
+        color: var(--muted);
+        display: block;
+        font-size: 11px;
+        margin-bottom: 3px;
+      }
+
+      .mono {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 24px;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .badge.ready {
+        color: var(--green);
+        background: var(--green-bg);
+      }
+
+      .badge.running {
+        color: var(--blue);
+        background: var(--blue-bg);
+      }
+
+      .badge.needs {
+        color: var(--amber);
+        background: var(--amber-bg);
+      }
+
+      .badge.failed {
+        color: var(--red);
+        background: var(--red-bg);
+      }
+
+      .badge.completed {
+        color: #475467;
+        background: #eef1f5;
+      }
+
+      .detail-head {
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 12px;
+      }
+
+      .detail-scroll {
+        overflow: auto;
+        padding: 16px 18px 22px;
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+
+      .block {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .block-title {
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .block-body {
+        padding: 14px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .coord-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(44px, 1fr));
+        gap: 6px;
+      }
+
+      .process-table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 720px;
+        background: #ffffff;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 10px;
+        text-align: left;
+        vertical-align: top;
+        font-size: 12px;
+      }
+
+      th {
+        color: var(--muted);
+        background: #f8fafc;
+        font-weight: 750;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .error-list {
+        display: grid;
+        gap: 7px;
+      }
+
+      .error-item {
+        padding: 9px 10px;
+        border-radius: 7px;
+        color: var(--amber);
+        background: var(--amber-bg);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .start-options {
+        display: grid;
+        gap: 10px;
+      }
+
+      .radio-row {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        gap: 9px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+      }
+
+      .radio-row.selected {
+        border-color: var(--green);
+        background: var(--green-bg);
+      }
+
+      .radio-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 5px solid var(--green);
+        margin-top: 2px;
+      }
+
+      .footer-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
+
+      @media (max-width: 1280px) {
+        .app {
+          grid-template-columns: 250px minmax(420px, 1fr);
+        }
+
+        .right-panel {
+          position: fixed;
+          right: 18px;
+          top: 78px;
+          bottom: 18px;
+          width: min(460px, calc(100vw - 36px));
+          border: 1px solid var(--line);
+          border-radius: 10px;
+          box-shadow: var(--shadow);
+          z-index: 10;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .topbar {
+          height: auto;
+          padding: 14px;
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .app {
+          grid-template-columns: 1fr;
+        }
+
+        .left-panel {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .wizard {
+          display: none;
+        }
+
+        .preview-area {
+          grid-template-columns: minmax(160px, 280px) 1fr;
+          align-items: center;
+        }
+
+        .center-panel {
+          min-height: 720px;
+        }
+
+        .right-panel {
+          position: static;
+          width: auto;
+          border-radius: 0;
+          box-shadow: none;
+          border-left: 0;
+          border-right: 0;
+        }
+
+        .filters {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .row-meta {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .preview-area,
+        .form-grid,
+        .coord-grid,
+        .filters {
+          grid-template-columns: 1fr;
+        }
+
+        .content-title-row,
+        .block-title {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .project-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">VM</div>
+          <div class="brand-title">
+            <strong>VM Project Console</strong>
+            <span>Digital Thread Virtual Machining</span>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="btn" aria-label="새로고침">Refresh</button>
+          <button class="btn primary" aria-label="VM 프로젝트 생성">New VM Project</button>
+        </div>
+      </header>
+
+      <main class="app">
+        <aside class="panel left-panel" aria-label="프로젝트 프리뷰와 생성 위저드">
+          <section class="section-head">
+            <div>
+              <h2>Project Preview</h2>
+              <p class="subtle">DP TITLE_IMAGE가 있으면 썸네일을 보여주고, 없으면 No image 상태를 유지합니다.</p>
+            </div>
+          </section>
+
+          <section class="preview-area">
+            <div class="image-frame">
+              <div class="stock-box" aria-hidden="true"></div>
+            </div>
+            <div class="metric-grid">
+              <div class="metric">
+                <span>Source</span>
+                <strong>DP</strong>
+              </div>
+              <div class="metric">
+                <span>Workplan</span>
+                <strong>wp_001</strong>
+              </div>
+              <div class="metric">
+                <span>Stock</span>
+                <strong>Aluminum 6061</strong>
+              </div>
+              <div class="metric">
+                <span>Process</span>
+                <strong>8 steps</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="wizard" aria-label="VM 프로젝트 생성">
+            <div>
+              <h2>Create VM Project</h2>
+              <p class="subtle">Source, project, workplan 순서로 선택합니다.</p>
+            </div>
+            <div class="stepper">
+              <div class="step active">
+                <div class="step-num">1</div>
+                <div class="step-body">
+                  <h3>Source</h3>
+                  <div class="segmented" role="tablist" aria-label="소스 선택">
+                    <button class="segment active" role="tab" aria-selected="true">DP</button>
+                    <button class="segment" role="tab" aria-selected="false">ISO</button>
+                  </div>
+                </div>
+              </div>
+              <div class="step active">
+                <div class="step-num">2</div>
+                <div class="step-body">
+                  <h3>Project</h3>
+                  <div class="compact-list">
+                    <div class="compact-row selected">
+                      <strong>iso301 vm test project</strong>
+                      <span class="subtle mono">v1 / vm_test_project</span>
+                    </div>
+                    <div class="compact-row">
+                      <strong>verification cut sample</strong>
+                      <span class="subtle mono">iso301_test_cut</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="step active">
+                <div class="step-num">3</div>
+                <div class="step-body">
+                  <h3>Workplan</h3>
+                  <select class="select" aria-label="워크플랜 선택">
+                    <option>wp_001 - 8 workingsteps</option>
+                    <option>wp_002 - 4 workingsteps</option>
+                  </select>
+                  <button class="btn primary">Create from DP</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="panel center-panel" aria-label="VM 프로젝트 목록">
+          <header class="content-head">
+            <div class="content-title-row">
+              <div class="content-title">
+                <div class="title-line">
+                  <h1>VM Projects</h1>
+                  <span class="badge running">13 total</span>
+                </div>
+                <span class="subtle">컨테이너에서 조회되는 VM 프로젝트를 상태별로 확인합니다.</span>
+              </div>
+              <button class="btn">Export</button>
+            </div>
+            <div class="filters">
+              <input class="input" value="iso301" aria-label="프로젝트 검색" />
+              <select class="select" aria-label="상태 필터">
+                <option>All status</option>
+                <option>ready</option>
+                <option>needs-fix</option>
+                <option>running</option>
+              </select>
+              <select class="select" aria-label="소스 필터">
+                <option>All source</option>
+                <option>DP</option>
+                <option>ISO</option>
+              </select>
+              <button class="btn">Search</button>
+            </div>
+          </header>
+
+          <nav class="status-tabs" aria-label="상태 탭">
+            <button class="status-tab active">All 13</button>
+            <button class="status-tab">Ready 3</button>
+            <button class="status-tab">Needs fix 4</button>
+            <button class="status-tab">Running 1</button>
+            <button class="status-tab">Completed 4</button>
+            <button class="status-tab">Failed 1</button>
+          </nav>
+
+          <div class="project-list">
+            <article class="project-row selected">
+              <div class="row-main">
+                <div class="row-title">
+                  <strong>iso301 vm test project</strong>
+                  <span class="badge ready">ready</span>
+                  <span class="badge running">DP</span>
+                </div>
+                <div class="row-meta">
+                  <div class="meta-item">
+                    <span>gid</span>
+                    <div class="mono">https://digital-thread.re/kitech/vm_test_iso301</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>eid</span>
+                    <div class="mono">v1</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>updated</span>
+                    <div class="mono">2026-04-22 19:04</div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn">Open</button>
+            </article>
+
+            <article class="project-row">
+              <div class="row-main">
+                <div class="row-title">
+                  <strong>2026-04-22_pp_5_13_16</strong>
+                  <span class="badge needs">needs-fix</span>
+                  <span class="badge running">DP</span>
+                </div>
+                <div class="row-meta">
+                  <div class="meta-item">
+                    <span>validation</span>
+                    <div class="mono">8 process errors</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>workplan</span>
+                    <div class="mono">wp_001</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>updated</span>
+                    <div class="mono">2026-04-22 17:13</div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn">Fix</button>
+            </article>
+
+            <article class="project-row">
+              <div class="row-main">
+                <div class="row-title">
+                  <strong>2026-04-22_pp_6_29_08</strong>
+                  <span class="badge completed">completed</span>
+                  <span class="badge running">DP</span>
+                </div>
+                <div class="row-meta">
+                  <div class="meta-item">
+                    <span>vm job</span>
+                    <div class="mono">macsim_69e8...</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>result</span>
+                    <div class="mono">file upload</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>updated</span>
+                    <div class="mono">2026-04-22 19:04</div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn">View</button>
+            </article>
+
+            <article class="project-row">
+              <div class="row-main">
+                <div class="row-title">
+                  <strong>legacy iso project sample</strong>
+                  <span class="badge failed">failed</span>
+                  <span class="badge completed">ISO</span>
+                </div>
+                <div class="row-meta">
+                  <div class="meta-item">
+                    <span>image</span>
+                    <div class="mono">No image</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>eid</span>
+                    <div class="mono">iso301_test_cut</div>
+                  </div>
+                  <div class="meta-item">
+                    <span>action</span>
+                    <div class="mono">reset available</div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn danger">Reset</button>
+            </article>
+          </div>
+        </section>
+
+        <aside class="panel right-panel" aria-label="VM 프로젝트 상세">
+          <header class="detail-head">
+            <div class="content-title-row">
+              <div class="content-title">
+                <div class="title-line">
+                  <h2>iso301 vm test project</h2>
+                  <span class="badge ready">ready</span>
+                </div>
+                <span class="subtle mono">69e894e50174217b7eff872e</span>
+              </div>
+              <button class="btn">Close</button>
+            </div>
+          </header>
+
+          <div class="detail-scroll">
+            <section class="block">
+              <div class="block-title">
+                <h3>Source Metadata</h3>
+                <span class="badge running">DP</span>
+              </div>
+              <div class="block-body">
+                <div class="form-grid">
+                  <div class="field">
+                    <label>Asset ID</label>
+                    <input class="input mono" value="vm_test_project" readonly />
+                  </div>
+                  <div class="field">
+                    <label>Element ID</label>
+                    <input class="input mono" value="v1" readonly />
+                  </div>
+                  <div class="field">
+                    <label>Workplan</label>
+                    <input class="input mono" value="wp_001" readonly />
+                  </div>
+                  <div class="field">
+                    <label>Thumbnail</label>
+                    <input class="input" value="TITLE_IMAGE resolved" readonly />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="block">
+              <div class="block-title">
+                <h3>Stock</h3>
+                <button class="btn">Save Stock</button>
+              </div>
+              <div class="block-body">
+                <div class="form-grid">
+                  <div class="field">
+                    <label>Stock type</label>
+                    <select class="select">
+                      <option>45 - Aluminum 6061-T6</option>
+                      <option>9 - Aluminum 7075-T6</option>
+                      <option>62 - AISI 4340 Steel</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Raw stock size</label>
+                    <input class="input mono" value="-51,51,-41,41,-50,1" />
+                  </div>
+                </div>
+                <div class="coord-grid">
+                  <input class="input mono" value="-51" aria-label="x min" />
+                  <input class="input mono" value="51" aria-label="x max" />
+                  <input class="input mono" value="-41" aria-label="y min" />
+                  <input class="input mono" value="41" aria-label="y max" />
+                  <input class="input mono" value="-50" aria-label="z min" />
+                  <input class="input mono" value="1" aria-label="z max" />
+                </div>
+              </div>
+            </section>
+
+            <section class="block">
+              <div class="block-title">
+                <h3>Process</h3>
+                <button class="btn">Save Process</button>
+              </div>
+              <div class="block-body">
+                <div class="process-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>NC file</th>
+                        <th>Output</th>
+                        <th>Tool data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>1</td>
+                        <td class="mono">ncdata\merge_1\merge_1.tap</td>
+                        <td class="mono">result\merge_1</td>
+                        <td class="mono">1,40,0,20,0,null,null,null,4</td>
+                      </tr>
+                      <tr>
+                        <td>2</td>
+                        <td class="mono">ncdata\merge_2\merge_2.tap</td>
+                        <td class="mono">result\merge_2</td>
+                        <td class="mono">2,12,0,6,0,null,null,null,4</td>
+                      </tr>
+                      <tr>
+                        <td>3</td>
+                        <td class="mono">ncdata\merge_3\merge_3.tap</td>
+                        <td class="mono">result\merge_3</td>
+                        <td class="mono">2,12,0,6,0,null,null,null,4</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="block">
+              <div class="block-title">
+                <h3>Validation</h3>
+                <span class="badge needs">needs review</span>
+              </div>
+              <div class="block-body">
+                <div class="error-list">
+                  <div class="error-item">process[1].tool_data contains null or is empty</div>
+                  <div class="error-item">process[2].tool_data contains null or is empty</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="block">
+              <div class="block-title">
+                <h3>VM Start</h3>
+                <span class="badge ready">ready only</span>
+              </div>
+              <div class="block-body">
+                <div class="start-options">
+                  <label class="radio-row selected">
+                    <span class="radio-dot" aria-hidden="true"></span>
+                    <span>
+                      <strong>결과 ZIP 파일 직접 업로드</strong>
+                      <span class="subtle">upload_result: true</span>
+                    </span>
+                  </label>
+                  <label class="radio-row">
+                    <span></span>
+                    <span>
+                      <strong>결과 링크만 저장</strong>
+                      <span class="subtle">upload_result: false</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="footer-actions">
+                  <button class="btn">Poll now</button>
+                  <button class="btn success">Start VM</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>

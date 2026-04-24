@@ -401,6 +401,8 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
     dt_file XML에서 필요한 값 추출:
     - element_id, display_name
     - category
+    - content_type
+    - path
     - content_oid: <value> (GridFS/ObjectId)
     - refs: {DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN}
     - properties: [{"key": ..., "value": ...}, ...]
@@ -421,6 +423,8 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
     element_id = _get_by_local(item, "element_id")
     display_name = _get_by_local(item, "display_name")
     category = _get_by_local(item, "category")
+    content_type = _get_by_local(item, "content_type")
+    path = _get_by_local(item, "path")
     content_oid = _get_by_local(item, "value")  # <value>69030ba1a9...>
 
     refs: Dict[str, Optional[str]] = {
@@ -476,6 +480,10 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
         "element_id": element_id,
         "display_name": display_name,
         "category": category,  # 추가
+        "content_type": (
+            (content_type or "").strip() if isinstance(content_type, str) else None
+        ),
+        "path": (path or "").strip() if isinstance(path, str) else None,
         "content_oid": (
             (content_oid or "").strip() if isinstance(content_oid, str) else None
         ),
