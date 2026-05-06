@@ -1327,3 +1327,26 @@ vm_json_007_002
 - `content_type=application/json`
 - `reference`에는 기존 `DT_GLOBAL_ASSET`, `DT_ASSET`, `DT_PROJECT`, `WORKPLAN`에 더해 `WORKINGSTEP`을 포함한다.
 - `properties`에는 `NO_CODE`, `SEQ_ID`, `PROCESS_INDEX`, `Date`를 포함한다.
+
+---
+
+## 2026-05-06 — React 프론트엔드 전환 준비용 Agent Skills 추가
+
+### 1. 설치 배경
+
+VM_middle 프론트를 기존 FastAPI 정적 HTML/JS 구현에서 React 기반 UI로 전환하기 전에, 프론트엔드 구조와 디자인 품질 기준을 맞추기 위한 Agent Skills를 프로젝트 scope로 추가했다.
+
+### 2. 추가된 Skills
+
+**파일**: `.agents/skills/`, `skills-lock.json`
+
+추가된 skill:
+
+- `vercel-react-best-practices`: React/Next.js 성능, 데이터 fetching, bundle size, re-render 최적화 기준으로 사용
+- `impeccable`: UI 디자인 품질, 컬러/타이포그래피/레이아웃/상태 표현, anti-pattern 점검 기준으로 사용
+
+### 3. 활용 계획
+
+- React 전환 시 Vercel React Best Practices 기준으로 컴포넌트 구조, 상태 분리, API 호출 흐름을 설계한다.
+- Impeccable 기준으로 VM Middle 운영 콘솔에 맞는 색상, 간격, 타이포그래피, 화면 밀도, 반응형 품질을 점검한다.
+- `skills-lock.json`은 설치된 skill의 source와 hash를 기록하는 잠금 파일로, 프로젝트 내 동일한 skill 기준을 공유하기 위한 메타데이터로 관리한다.
