@@ -87,7 +87,7 @@ const state = {
   selectedWorkplan: "",
   workplansLoading: false,
   createLoading: false,
-  startUploadResult: true,
+  startUploadMode: "file",
   ui: {
     detailOpen: false,
     processHelpOpen: true,
@@ -571,7 +571,7 @@ async function startVm() {
       `${API.vmProjects}/${encodeURIComponent(state.vm.detail.id)}/start-vm`,
       {
         method: "POST",
-        body: { upload_result: state.startUploadResult },
+        body: { upload_mode: state.startUploadMode },
       }
     );
     setNotice(
@@ -1061,6 +1061,9 @@ function renderDetailPanel() {
             : '<div class="empty">validation error가 없습니다.</div>'
         }
         <div class="meta-grid">
+          <div class="meta-item"><strong>upload_mode</strong><span>${escapeHtml(
+            detail.upload_mode || "-"
+          )}</span></div>
           <div class="meta-item"><strong>vm_job_id</strong><span>${escapeHtml(
             detail.vm_job_id || "-"
           )}</span></div>
@@ -1072,6 +1075,23 @@ function renderDetailPanel() {
           )}</span></div>
           <div class="meta-item"><strong>vm_error_message</strong><span>${escapeHtml(
             detail.vm_error_message || "-"
+          )}</span></div>
+          <div class="meta-item"><strong>result_seq_id</strong><span>${escapeHtml(
+            detail.vm_result_upload?.seq_id ?? "-"
+          )}</span></div>
+          <div class="meta-item"><strong>uploaded</strong><span>${escapeHtml(
+            detail.vm_result_upload
+              ? `${detail.vm_result_upload.uploaded_indices?.length || 0} / ${detail.vm_result_upload.total_count || 0}`
+              : "-"
+          )}</span></div>
+          <div class="meta-item"><strong>last_uploaded</strong><span>${escapeHtml(
+            detail.vm_result_upload?.last_uploaded_element_id || "-"
+          )}</span></div>
+          <div class="meta-item"><strong>failed_process</strong><span>${escapeHtml(
+            detail.vm_result_upload?.failed_index ?? "-"
+          )}</span></div>
+          <div class="meta-item"><strong>upload_error</strong><span>${escapeHtml(
+            detail.vm_result_upload?.error_message || "-"
           )}</span></div>
         </div>
       </section>
@@ -1087,10 +1107,10 @@ function renderDetailPanel() {
           <label class="workplan-option">
             <input
               type="radio"
-              name="upload-result"
-              value="true"
+              name="upload-mode"
+              value="file"
               data-action="upload-mode"
-              ${state.startUploadResult ? "checked" : ""}
+              ${state.startUploadMode === "file" ? "checked" : ""}
             />
             <span class="workplan-copy">
               <strong>파일 업로드</strong>
@@ -1100,17 +1120,35 @@ function renderDetailPanel() {
           <label class="workplan-option">
             <input
               type="radio"
-              name="upload-result"
-              value="false"
+              name="upload-mode"
+              value="link"
               data-action="upload-mode"
-              ${state.startUploadResult ? "" : "checked"}
+              ${state.startUploadMode === "link" ? "checked" : ""}
             />
             <span class="workplan-copy">
               <strong>링크 저장</strong>
               <span>결과 파일 링크만 path에 기록합니다.</span>
             </span>
           </label>
+          <label class="workplan-option">
+            <input
+              type="radio"
+              name="upload-mode"
+              value="json"
+              data-action="upload-mode"
+              ${state.startUploadMode === "json" ? "checked" : ""}
+            />
+            <span class="workplan-copy">
+              <strong>JSON 업로드</strong>
+              <span>workingstep별 JSON 결과를 개별 dt_file로 등록합니다.</span>
+            </span>
+          </label>
         </div>
+        ${
+          state.startUploadMode === "json"
+            ? '<div class="subtle">JSON 업로드는 중간 실패 시 프로젝트가 failed 처리되며, 이미 올라간 일부 dt_file은 관리자 정리가 필요할 수 있습니다.</div>'
+            : ""
+        }
         <button class="btn success" data-action="start-vm" ${
           detail.status === "ready" && !state.vm.actionLoading ? "" : "disabled"
         }>VM Start</button>
@@ -1383,7 +1421,8 @@ function bindEvents() {
 
   app.querySelectorAll("[data-action='upload-mode']").forEach((input) => {
     input.addEventListener("change", () => {
-      state.startUploadResult = input.value === "true";
+      state.startUploadMode = input.value || "file";
+      render();
     });
   });
 

@@ -244,6 +244,7 @@ class VmProjectDAO:
         *,
         vm_job_id: str,
         vm_state: str | None,
+        upload_mode: str = "file",
         upload_result: bool = True,
     ) -> None:
         await self.col.update_one(
@@ -255,11 +256,46 @@ class VmProjectDAO:
                     "vm_last_polled_at": _now_iso(),
                     "vm_error_message": None,
                     "vm_raw_status": vm_state,
+                    "upload_mode": upload_mode,
                     "upload_result": upload_result,
+                    "vm_result_upload": {
+                        "mode": upload_mode,
+                        "seq_id": None,
+                        "total_count": 0,
+                        "uploaded_indices": [],
+                        "uploaded_element_ids": [],
+                        "last_uploaded_index": None,
+                        "last_uploaded_element_id": None,
+                        "failed_index": None,
+                        "error_message": None,
+                        "updated_at": _now_iso(),
+                    },
+                    "vm_dt_file_upload_attempts": 0,
                     "updated_at": _now_iso(),
                 }
             },
         )
+
+    async def set_vm_result_upload(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        upload_info: Dict[str, Any],
+        project_status: str | None = None,
+        vm_raw_status: str | None = None,
+        vm_error_message: str | None = None,
+    ) -> None:
+        update: Dict[str, Any] = {
+            "vm_result_upload": upload_info,
+            "updated_at": _now_iso(),
+        }
+        if project_status is not None:
+            update["status"] = project_status
+        if vm_raw_status is not None:
+            update["vm_raw_status"] = vm_raw_status
+        if vm_error_message is not None:
+            update["vm_error_message"] = vm_error_message
+        await self.col.update_one({"_id": vm_project_id}, {"$set": update})
 
     async def set_vm_error(
         self,
@@ -334,6 +370,8 @@ class VmProjectDAO:
                     "vm_error_message": None,
                     "vm_raw_status": None,
                     "vm_last_polled_at": None,
+                    "vm_result_upload": None,
+                    "vm_dt_file_upload_attempts": 0,
                     "updated_at": _now_iso(),
                 }
             },

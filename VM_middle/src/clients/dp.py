@@ -109,6 +109,7 @@ async def upload_xml_with_file(
     *,
     file_path: Optional[str] = None,
     file_name: str = "vm_result.zip",
+    content_type: str = "application/zip",
 ) -> Any:
     """
     POST /openapi/v2/asset/xml-with-file
@@ -127,7 +128,7 @@ async def upload_xml_with_file(
                     f"{_base()}/openapi/v2/asset/xml-with-file",
                     headers=_dp_headers(),
                     data=data,
-                    files=[("files", (file_name, fh, "application/zip"))],
+                    files=[("files", (file_name, fh, content_type))],
                 )
         else:
             r = await client.post(

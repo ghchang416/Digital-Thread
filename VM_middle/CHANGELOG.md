@@ -1147,3 +1147,183 @@ GET /api/v1/vm-project/{id}/process-annotations
   - `GET /api/v1/vm-project/69e894e50174217b7eff872e/process-annotations` → `200`
   - 응답 항목 수 `8`, 각 항목에 `workingstep_id`와 `tool_element_id` 포함
 - 기존 프로젝트 상세 process 개수와 annotation 개수가 일치하는지 확인했다.
+
+---
+
+## 2026-04-28 — VM 결과 JSON 업로드 모드 추가
+
+### 1. VM Start 업로드 모드를 bool에서 enum 개념으로 확장
+
+**파일**: `src/schemas/vm_project.py`, `src/api/v1/vm_project.py`, `frontend/app.js`
+
+#### 개발 배경
+- 기존 `start-vm`은 `upload_result: true/false`만 지원해 ZIP 파일 업로드 또는 링크 저장 두 경우만 표현할 수 있었다.
+- 새 요구사항은 VM 결과 ZIP 내부의 workingstep별 JSON 파일들을 개별 `dt_file`로 등록하는 세 번째 방식이 필요했다.
+
+#### 구현 방식
+- 스키마에 `VmResultUploadMode(file | link | json)`를 추가했다.
+- `StartVmIn`은 새 필드 `upload_mode`를 우선 사용하고, 기존 `upload_result`는 레거시 호환용으로 유지했다.
+- 라우터에서는 `body.resolved_upload_mode()`로 최종 모드를 해석해 서비스에 전달한다.
+- 프론트 `VM Start` 섹션도 다음 세 옵션으로 확장했다.
+  - `file`
+  - `link`
+  - `json`
+
+### 2. VM 프로젝트 문서에 JSON 업로드 진행 상태 저장
+
+**파일**: `src/dao/vm_project.py`, `src/schemas/vm_project.py`, `src/services/vm_project.py`
+
+#### 저장 위치
+- 데이터플랫폼이 아니라 `VM_middle`의 MongoDB `vm_project` 문서 안에 저장한다.
+- 저장 단위는 데이터플랫폼 프로젝트 전체가 아니라, 특정 `gid/aid/eid/wpid` 조합으로 생성된 **VM 프로젝트 1건**이다.
+
+#### 저장 구조
+- `upload_mode`
+- `vm_result_upload`
+
+예시:
+
+```json
+{
+  "upload_mode": "json",
+  "vm_result_upload": {
+    "mode": "json",
+    "seq_id": 7,
+    "total_count": 8,
+    "uploaded_indices": [1, 2, 3],
+    "uploaded_element_ids": [
+      "vm_json_007_001",
+      "vm_json_007_002",
+      "vm_json_007_003"
+    ],
+    "last_uploaded_index": 3,
+    "last_uploaded_element_id": "vm_json_007_003",
+    "failed_index": 4,
+    "error_message": "process 4 (vm_json_007_004) 업로드 실패: ...",
+    "updated_at": "2026-04-28T..."
+  }
+}
+```
+
+#### 구현 포인트
+- `set_vm_job_started()`에서 `upload_mode`와 빈 `vm_result_upload` 상태를 초기화한다.
+- `VmProjectDetailOut`에 `upload_mode`, `vm_result_upload`를 추가해 프론트가 그대로 읽을 수 있게 했다.
+- `reset_failed_to_ready()` 시 `vm_result_upload`와 업로드 시도 카운트도 함께 초기화한다.
+
+### 3. JSON 업로드용 dt_file XML 구조 확장
+
+**파일**: `src/utils/xml_parser.py`
+
+#### 구현 방식
+- 기존 `make_vm_dt_file_xml()`을 공용화해 다음 값을 파라미터로 받을 수 있게 확장했다.
+  - `content_type`
+  - `display_name`
+  - `element_description`
+  - `vm_element_id`
+  - `workingstep_id`
+  - `process_index`
+- JSON 결과 업로드 시:
+  - `content_type = application/json`
+  - `WORKPLAN` 아래에 `WORKINGSTEP` reference 추가
+  - `PROCESS_INDEX` property 추가
+- `parse_dt_file_xml()`도 `WORKINGSTEP` reference를 파싱할 수 있게 보완했다.
+
+### 4. JSON 업로드용 preflight + 순차 등록 로직 추가
+
+**파일**: `src/services/vm_project.py`, `src/clients/dp.py`
+
+#### 구현 원칙
+- 배치 업로드/자동 롤백 API가 불분명하므로, JSON 모드는 **순차 업로드**로 구현했다.
+- 대신 업로드 시작 전 로컬 preflight를 강하게 수행하고, 중간 실패 시 즉시 `failed`로 전환한다.
+
+#### preflight 내용
+- `process_annotations` 없으면 source XML에서 재계산
+- `project_file_draft.process` 수와 `process_annotations` 수 일치 확인
+- 결과 ZIP 다운로드 및 압축 해제
+- 각 `output_dir_path` 폴더 존재 확인
+- 각 process 결과 폴더 안의 `.json` 파일이 정확히 1개인지 확인
+- 각 process에 대응하는 `workingstep_id`가 비어 있지 않은지 확인
+
+#### 업로드 규칙
+- `SEQ_ID`는 한 번의 VM 실행 배치에서 동일한 값을 공유한다.
+- 개별 파일 구분은 `PROCESS_INDEX`와 `element_id`로 한다.
+- `element_id`/`asset_id` 규칙:
+
+```text
+vm_json_{seq:03d}_{process_index:03d}
+```
+
+예:
+
+```text
+vm_json_007_001
+vm_json_007_002
+```
+
+#### 실패 정책
+- JSON 업로드 도중 하나라도 실패하면 즉시 중단한다.
+- 이미 등록된 일부 dt_file은 자동 롤백하지 않는다.
+- 해당 VM 프로젝트는 `failed`로 전환하고, `vm_result_upload`에 어디까지 올라갔는지 기록한다.
+- 남은 쓰레기 데이터는 어드민 계정 정리 또는 플랫폼 업체 지원을 전제로 한다.
+
+### 5. 프론트 상세 화면에 업로드 진행 상태 표시
+
+**파일**: `frontend/app.js`
+
+#### 표시 항목
+- `upload_mode`
+- `result_seq_id`
+- `uploaded`
+- `last_uploaded`
+- `failed_process`
+- `upload_error`
+
+#### UI 변경
+- `VM Start`에 `JSON 업로드` 라디오 옵션 추가
+- `json` 선택 시, 중간 실패하면 관리자 정리가 필요할 수 있다는 안내 문구를 함께 표시하도록 했다.
+
+### 6. 검증
+
+- `python3 -m py_compile VM_middle/src/api/v1/vm_project.py VM_middle/src/dao/vm_project.py VM_middle/src/schemas/vm_project.py VM_middle/src/services/vm_project.py VM_middle/src/clients/dp.py VM_middle/src/utils/xml_parser.py`
+- `node --check VM_middle/frontend/app.js`
+- 컨테이너 내부 API 확인:
+  - `GET /api/v1/vm-project/69e894e50174217b7eff872e` 응답에 `upload_mode`, `vm_result_upload` 필드 노출 확인
+  - `POST /api/v1/vm-project/69e894e50174217b7eff872e/start-vm` with `{"upload_mode":"json"}` 요청이 스키마 레벨에서 정상 수용되는 것 확인
+
+### 7. DP 프로젝트 생성 에러 응답 정리
+
+**파일**: `src/services/vm_project.py`, `src/api/v1/vm_project.py`
+
+#### 개발 배경
+- DP 원본 프로젝트로 VM 프로젝트를 생성할 때, 데이터플랫폼 `find/element`가 일시적으로 `503 Service Temporarily Unavailable`를 반환하면 내부에서 `ValueError`로 감싼 뒤 FastAPI 바깥까지 전파됐다.
+- 그 결과 프론트에서는 원인이 DP 업스트림 장애임에도 `500 Internal Server Error`로만 보였다.
+
+#### 구현 방식
+- 서비스 계층에 DP 업스트림 예외를 `HTTPException`으로 변환하는 헬퍼를 추가했다.
+- 특히 `503`은 그대로 `503`으로 노출하고, 그 외 DP HTTP 에러나 네트워크 에러는 `502`로 정리했다.
+- `create_full` 라우터에는 `ValueError`를 `400 Bad Request`로 바꾸는 방어를 추가해, 앞으로 입력/도메인 오류가 다시 애매한 `500`으로 보이지 않게 했다.
+
+#### 기대 효과
+- DP 일시 장애 시 프론트와 운영 로그에서 원인을 바로 구분할 수 있다.
+- 사용자에게는 “DP upstream 문제”와 “우리 입력/도메인 문제”가 서로 다른 상태코드로 보인다.
+
+#### 추가 보완
+- 같은 생성 흐름 안에서 `dt_file` 매칭 후 NC 원본 파일을 `/files/download/userdata`로 받는 단계도 DP 업스트림 `503`이 날 수 있어서, 이 경로 역시 `500`이 아니라 `502/503`으로 노출되도록 정리했다.
+- DP `dt_cutting_tool_13399` 조회가 실패해 tool 값이 `null`로 떨어지는 경우를 추적하기 쉽도록, `process_index`, `workingstep_id`, `tool_asset_id`, `tool_element_id`, `error`를 경고 로그와 `debug.tool_fetch_failures`에 남기도록 보강했다.
+
+## 2026-04-30 — VM JSON dt_file XML 예시 추가
+
+### 1. JSON 결과 업로드 XML 샘플 작성
+
+**파일**: `data/vm_json_dt_file_sample.xml`
+
+#### 작성 기준
+- 성공한 DP VM 프로젝트 `69e894e50174217b7eff872e`를 기준으로 실제 `gid/aid/eid/wpid` 값을 사용했다.
+- 해당 프로젝트의 process annotation 중 process 1을 사용해 `WORKINGSTEP=페이스1`, `PROCESS_INDEX=1` 예시를 작성했다.
+- 기존 ZIP 결과 `vm_001`이 이미 있는 프로젝트이므로, JSON 모드로 다음 실행 결과를 등록하는 상황을 가정해 `SEQ_ID=2`, `element_id=vm_json_002_001`로 작성했다.
+
+#### 구조
+- `category=VM`
+- `content_type=application/json`
+- `reference`에는 기존 `DT_GLOBAL_ASSET`, `DT_ASSET`, `DT_PROJECT`, `WORKPLAN`에 더해 `WORKINGSTEP`을 포함한다.
+- `properties`에는 `NO_CODE`, `SEQ_ID`, `PROCESS_INDEX`, `Date`를 포함한다.

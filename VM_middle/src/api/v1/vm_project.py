@@ -33,11 +33,16 @@ async def create_full(
     - eid : 프로젝트의 element_id
     - wpid : 워크플랜 its_id
     """
-    if payload.source == "dp":
-        result = await svc.create_full_from_dp(payload)
-    else:
-        result = await svc.create_full_from_iso(payload)
-    return result
+    try:
+        if payload.source == "dp":
+            result = await svc.create_full_from_dp(payload)
+        else:
+            result = await svc.create_full_from_iso(payload)
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("", response_model=VmProjectListResponse, summary="VM 프로젝트 목록")
@@ -133,11 +138,15 @@ async def start_vm(
     """
     VM 가상가공을 시작합니다.
 
-    - **upload_result**: VM 완료 후 결과 처리 방식
-      - `true` (기본값): 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드
-      - `false`: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장
+    - **upload_mode**:
+      - `file` (기본값): 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드
+      - `link`: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장
+      - `json`: 결과 ZIP 내부의 workingstep별 JSON 파일들을 개별 dt_file로 업로드
     """
-    return await svc.start_vm_job(ObjectId(vm_project_id), upload_result=body.upload_result)
+    return await svc.start_vm_job(
+        ObjectId(vm_project_id),
+        upload_mode=body.resolved_upload_mode(),
+    )
 
 
 # @router.post("/from-iso/preview", response_model=PreviewFromIsoOut)

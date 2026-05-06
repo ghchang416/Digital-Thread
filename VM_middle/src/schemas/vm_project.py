@@ -23,6 +23,12 @@ class VmProjectStatusEnum(str, Enum):
     failed = "failed"
 
 
+class VmResultUploadMode(str, Enum):
+    file = "file"
+    link = "link"
+    json = "json"
+
+
 # ==== 입력 ====
 class VmProjectCreateIn(BaseModel):
     """
@@ -108,6 +114,19 @@ class ProcessAnnotationsResponse(BaseModel):
     items: List[ProcessAnnotationItemOut]
 
 
+class VmResultUploadOut(BaseModel):
+    mode: Optional[str] = None
+    seq_id: Optional[int] = None
+    total_count: int = 0
+    uploaded_indices: List[int] = Field(default_factory=list)
+    uploaded_element_ids: List[str] = Field(default_factory=list)
+    last_uploaded_index: Optional[int] = None
+    last_uploaded_element_id: Optional[str] = None
+    failed_index: Optional[int] = None
+    error_message: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class CreateFromIsoOut(BaseModel):
     id: str
     stock: StockInfo
@@ -115,14 +134,33 @@ class CreateFromIsoOut(BaseModel):
 
 
 class StartVmIn(BaseModel):
-    upload_result: bool = Field(
-        True,
+    upload_mode: Optional[VmResultUploadMode] = Field(
+        None,
         description=(
             "VM 완료 후 결과 처리 방식. "
-            "true: 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드 (권장). "
-            "false: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장."
+            "file: 결과 ZIP을 직접 다운로드하여 데이터 플랫폼에 파일로 업로드. "
+            "link: 결과 파일 링크(URL)만 dt_file의 path 필드에 저장. "
+            "json: 결과 ZIP 내부의 workingstep별 JSON 파일을 개별 dt_file로 업로드."
         ),
     )
+    upload_result: Optional[bool] = Field(
+        None,
+        description=(
+            "레거시 호환 필드. "
+            "true는 file, false는 link로 해석됩니다."
+        ),
+    )
+
+    def resolved_upload_mode(self) -> str:
+        if self.upload_mode is not None:
+            return self.upload_mode.value
+        if self.upload_result is None:
+            return VmResultUploadMode.file.value
+        return (
+            VmResultUploadMode.file.value
+            if self.upload_result
+            else VmResultUploadMode.link.value
+        )
 
 
 class StockPatchIn(BaseModel):
@@ -208,6 +246,8 @@ class VmProjectDetailOut(BaseModel):
     vm_last_polled_at: str | None = None
     vm_error_message: str | None = None
     vm_raw_status: str | None = None
+    upload_mode: Optional[str] = None
+    vm_result_upload: Optional[VmResultUploadOut] = None
 
     # 초안 프로젝트 파일(실행 전 편집본)
     project_file_draft: ProjectFileOut

@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Mapping
 import shutil
 import json
+import tempfile
+import zipfile
 
 import asyncio
 
@@ -24,6 +26,8 @@ from src.schemas.vm_project import (
     ProjectFileOut,
     StockInfo,
     StockPatchIn,
+    VmResultUploadOut,
+    VmResultUploadMode,
     VmProjectCreateIn,
     VmProjectListResponse,
     VmProjectListItem,
@@ -65,6 +69,33 @@ _STOCK_SIZE_6NUM_RE = re.compile(
     r"^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*,\s*"
     r"-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$"
 )
+
+
+def _dp_upstream_http_exception(context: str, exc: Exception) -> HTTPException:
+    if isinstance(exc, HTTPException):
+        return exc
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        upstream_status = exc.response.status_code if exc.response else None
+        if upstream_status == 404:
+            status_code = 404
+        elif upstream_status == 503:
+            status_code = 503
+        elif upstream_status and 500 <= upstream_status < 600:
+            status_code = 502
+        else:
+            status_code = 502
+
+        reason = ""
+        if exc.response is not None:
+            reason = exc.response.reason_phrase or ""
+        detail = f"{context}: {upstream_status} {reason}".strip()
+        return HTTPException(status_code=status_code, detail=detail)
+
+    if isinstance(exc, httpx.HTTPError):
+        return HTTPException(status_code=502, detail=f"{context}: {exc}")
+
+    return HTTPException(status_code=502, detail=f"{context}: {exc}")
 
 
 def _stock_from_material_xml(material_xml: str) -> StockInfo:
@@ -354,6 +385,33 @@ class VmProjectService:
 
         ws_refs = extract_tool_refs_in_order(proj_xml, wpid)
         return self._build_process_annotations(ws_refs)
+
+    @staticmethod
+    def _resolve_upload_mode_from_doc(doc: Mapping[str, Any] | None) -> str:
+        mode = str((doc or {}).get("upload_mode") or "").strip().lower()
+        if mode in {m.value for m in VmResultUploadMode}:
+            return mode
+        upload_result = (doc or {}).get("upload_result")
+        return (
+            VmResultUploadMode.file.value
+            if upload_result is not False
+            else VmResultUploadMode.link.value
+        )
+
+    @staticmethod
+    def _empty_vm_result_upload(mode: str) -> dict[str, Any]:
+        return {
+            "mode": mode,
+            "seq_id": None,
+            "total_count": 0,
+            "uploaded_indices": [],
+            "uploaded_element_ids": [],
+            "last_uploaded_index": None,
+            "last_uploaded_element_id": None,
+            "failed_index": None,
+            "error_message": None,
+            "updated_at": datetime.now().isoformat(),
+        }
 
     # ---------------- DB 초안 생성/조회/패치 ----------------
     async def create_from_iso(
@@ -992,7 +1050,10 @@ class VmProjectService:
         debug: Dict[str, Any] = {}
 
         # 1) 프로젝트 XML
-        proj_xml = await dp_client.get_element_xml(aid=payload.aid, eid=payload.eid)
+        try:
+            proj_xml = await dp_client.get_element_xml(aid=payload.aid, eid=payload.eid)
+        except Exception as e:
+            raise _dp_upstream_http_exception("DP 프로젝트 xml 조회 실패", e) from e
         if not proj_xml:
             raise ValueError("DP에서 프로젝트 xmlStr을 가져오지 못했습니다.")
         debug["display_name"] = extract_project_summary(proj_xml).get("display_name")
@@ -1030,7 +1091,7 @@ class VmProjectService:
         try:
             gid_elements = await dp_client.list_elements_by_gid(payload.gid)
         except Exception as e:
-            raise ValueError(f"DP element 목록 조회 실패: {e}")
+            raise _dp_upstream_http_exception("DP element 목록 조회 실패", e) from e
 
         file_items = [
             item for item in (gid_elements.get("content") or [])
@@ -1042,6 +1103,7 @@ class VmProjectService:
         # 5) dt_file 매칭 (xmlStr로 parse_dt_file_xml + match_dt_file_refs 재사용)
         matched_item: Optional[Dict[str, Any]] = None
         matched_info: Optional[Dict[str, Any]] = None
+        xml_fetch_errors: list[tuple[str, Exception]] = []
 
         for item in file_items:
             item_aid = item.get("assetId") or ""
@@ -1050,7 +1112,9 @@ class VmProjectService:
                 continue
             try:
                 xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
-            except Exception:
+            except Exception as e:
+                logger.warning("DP dt_file xml 조회 실패(graceful skip): %s", e)
+                xml_fetch_errors.append((item_eid, e))
                 continue
             if not xml:
                 continue
@@ -1061,6 +1125,12 @@ class VmProjectService:
                 break
 
         if not matched_item or not matched_info:
+            if xml_fetch_errors:
+                failed_eids = ", ".join(eid for eid, _ in xml_fetch_errors[:5])
+                context = "DP dt_file xml 조회 실패"
+                if failed_eids:
+                    context = f"{context} ({failed_eids})"
+                raise _dp_upstream_http_exception(context, xml_fetch_errors[0][1]) from xml_fetch_errors[0][1]
             raise ValueError("프로젝트/워크플랜 키와 일치하는 dt_file을 찾지 못했습니다.")
 
         nc_path = matched_item.get("path") or ""
@@ -1074,7 +1144,10 @@ class VmProjectService:
         }
 
         # 6) NC 다운로드
-        nc_text = await dp_client.download_nc_file(nc_path)
+        try:
+            nc_text = await dp_client.download_nc_file(nc_path)
+        except Exception as e:
+            raise _dp_upstream_http_exception("DP NC 파일 다운로드 실패", e) from e
         if not nc_text:
             raise ValueError("NC 파일 다운로드 실패 (빈 응답)")
 
@@ -1115,10 +1188,12 @@ class VmProjectService:
 
         # 10) process 생성 (공구 조회 실패 → null 채움, graceful)
         process_items: List[ProcessItemIn] = []
+        tool_fetch_failures: list[dict[str, Any]] = []
         for idx, w in enumerate(ws_refs):
             tnum = nc_tools[idx] if nc_tools[idx] is not None else ws_tools_num[idx]
 
             eff = cr = teeth = None
+            ws_id = w.get("ws_id")
             tool_eid = w.get("eid") or w.get("tool_element_id")
             tool_short_aid = w.get("aid")
             tool_gid = w.get("gid") or payload.gid
@@ -1134,8 +1209,40 @@ class VmProjectService:
                         eff = vals.get("effective_cutting_diameter")
                         cr = vals.get("corner_radius")
                         teeth = vals.get("number_of_teeth")
+                    else:
+                        failure = {
+                            "process_index": idx + 1,
+                            "workingstep_id": ws_id,
+                            "tool_asset_id": tool_aid,
+                            "tool_element_id": tool_eid,
+                            "reason": "empty_xml",
+                        }
+                        tool_fetch_failures.append(failure)
+                        logger.warning(
+                            "DP 공구 XML 비어 있음(graceful) process=%s ws_id=%s aid=%s eid=%s",
+                            idx + 1,
+                            ws_id,
+                            tool_aid,
+                            tool_eid,
+                        )
                 except Exception as e:
-                    logger.warning("DP 공구 조회 실패(graceful) eid=%s: %s", tool_eid, e)
+                    failure = {
+                        "process_index": idx + 1,
+                        "workingstep_id": ws_id,
+                        "tool_asset_id": tool_aid,
+                        "tool_element_id": tool_eid,
+                        "reason": "fetch_error",
+                        "error": str(e),
+                    }
+                    tool_fetch_failures.append(failure)
+                    logger.warning(
+                        "DP 공구 조회 실패(graceful) process=%s ws_id=%s aid=%s eid=%s: %s",
+                        idx + 1,
+                        ws_id,
+                        tool_aid,
+                        tool_eid,
+                        e,
+                    )
 
             half_minus_cr = (
                 (eff / 2 - cr)
@@ -1168,6 +1275,10 @@ class VmProjectService:
                     tool_data=tool_data,
                 )
             )
+
+        if tool_fetch_failures:
+            debug["tool_fetch_failures"] = tool_fetch_failures
+            debug["tool_fetch_failure_count"] = len(tool_fetch_failures)
 
         project_file = ProjectFileOut(
             stock_type=stock.stock_type,
@@ -1607,6 +1718,13 @@ class VmProjectService:
         vm_last_polled_at = doc.get("vm_last_polled_at")
         vm_error_message = doc.get("vm_error_message")
         vm_raw_status = doc.get("vm_raw_status")
+        upload_mode = self._resolve_upload_mode_from_doc(doc)
+        vm_result_upload_raw = doc.get("vm_result_upload")
+        vm_result_upload = (
+            VmResultUploadOut(**vm_result_upload_raw)
+            if isinstance(vm_result_upload_raw, dict)
+            else None
+        )
 
         return VmProjectDetailOut(
             id=str(doc.get("_id")),
@@ -1628,6 +1746,8 @@ class VmProjectService:
             vm_last_polled_at=vm_last_polled_at,
             vm_error_message=vm_error_message,
             vm_raw_status=vm_raw_status,
+            upload_mode=upload_mode,
+            vm_result_upload=vm_result_upload,
         )
 
     async def list_stock_items(self, q: str | None = None) -> StockItemsResponse:
@@ -1818,7 +1938,12 @@ class VmProjectService:
             )
         return {"vm_project_id": str(vm_project_id), "status": "ready"}
 
-    async def start_vm_job(self, vm_project_id: ObjectId, *, upload_result: bool = True) -> Dict[str, Any]:
+    async def start_vm_job(
+        self,
+        vm_project_id: ObjectId,
+        *,
+        upload_mode: str = VmResultUploadMode.file.value,
+    ) -> Dict[str, Any]:
         """
         1) status가 ready인지 확인 (아니면 400)
         2) 프로젝트 JSON, NC ZIP을 GridFS에서 꺼내 VM S3 업로드 API로 각각 업로드
@@ -1921,11 +2046,14 @@ class VmProjectService:
 
         vm_state = self._extract_state(vm_resp)
 
-        # 5) DB에 job 시작 정보 기록 (upload_result 포함)
+        upload_result = upload_mode != VmResultUploadMode.link.value
+
+        # 5) DB에 job 시작 정보 기록
         await self.dao.set_vm_job_started(
             vm_project_id,
             vm_job_id=str(vm_job_id),
             vm_state=vm_state,
+            upload_mode=upload_mode,
             upload_result=upload_result,
         )
 
@@ -2274,19 +2402,33 @@ class VmProjectService:
                     "vm_state": "ERROR",
                 }
 
-            _MAX_DT_FILE_ATTEMPTS = 3
-            current_attempts = (doc.get("vm_dt_file_upload_attempts") or 0) + 1
-            try:
-                await self._create_and_upload_vm_dt_file(doc, result_link)
-                new_status = "completed"
-            except Exception as upload_err:
-                if current_attempts >= _MAX_DT_FILE_ATTEMPTS:
-                    err_msg = f"VM dt_file 플랫폼 업로드 실패 ({current_attempts}/{_MAX_DT_FILE_ATTEMPTS}회 시도): {upload_err}"
-                    logger.error("dt_file upload max retries exceeded: project=%s err=%s", str(vm_project_id), upload_err)
-                    await self.dao.set_vm_poll_result(
+            upload_mode = self._resolve_upload_mode_from_doc(doc)
+
+            if upload_mode == VmResultUploadMode.json.value:
+                try:
+                    await self._create_and_upload_vm_json_dt_files(
+                        vm_project_id, doc, result_link
+                    )
+                    new_status = "completed"
+                except Exception as upload_err:
+                    err_msg = f"VM JSON dt_file 업로드 실패: {upload_err}"
+                    logger.error(
+                        "json dt_file upload failed: project=%s err=%s",
+                        str(vm_project_id),
+                        upload_err,
+                    )
+                    latest_doc = await self.dao.get(vm_project_id)
+                    upload_info = dict(
+                        (latest_doc or {}).get("vm_result_upload")
+                        or self._empty_vm_result_upload(upload_mode)
+                    )
+                    upload_info["error_message"] = err_msg
+                    upload_info["updated_at"] = datetime.now().isoformat()
+                    await self.dao.set_vm_result_upload(
                         vm_project_id,
-                        status="failed",
-                        vm_state=vm_state,
+                        upload_info=upload_info,
+                        project_status="failed",
+                        vm_raw_status=vm_state,
                         vm_error_message=err_msg,
                     )
                     return {
@@ -2294,20 +2436,41 @@ class VmProjectService:
                         "status": "failed",
                         "vm_state": vm_state,
                     }
-                else:
-                    err_msg = f"VM dt_file 업로드 시도 {current_attempts}/{_MAX_DT_FILE_ATTEMPTS} 실패: {upload_err}"
-                    logger.warning("dt_file upload attempt %d failed: project=%s err=%s", current_attempts, str(vm_project_id), upload_err)
-                    await self.dao.set_dt_file_upload_failed(
-                        vm_project_id,
-                        attempts=current_attempts,
-                        message=err_msg,
-                        vm_raw_status=vm_state,
-                    )
-                    return {
-                        "vm_project_id": str(vm_project_id),
-                        "status": "running",
-                        "vm_state": vm_state,
-                    }
+            else:
+                _MAX_DT_FILE_ATTEMPTS = 3
+                current_attempts = (doc.get("vm_dt_file_upload_attempts") or 0) + 1
+                try:
+                    await self._create_and_upload_vm_dt_file(doc, result_link)
+                    new_status = "completed"
+                except Exception as upload_err:
+                    if current_attempts >= _MAX_DT_FILE_ATTEMPTS:
+                        err_msg = f"VM dt_file 플랫폼 업로드 실패 ({current_attempts}/{_MAX_DT_FILE_ATTEMPTS}회 시도): {upload_err}"
+                        logger.error("dt_file upload max retries exceeded: project=%s err=%s", str(vm_project_id), upload_err)
+                        await self.dao.set_vm_poll_result(
+                            vm_project_id,
+                            status="failed",
+                            vm_state=vm_state,
+                            vm_error_message=err_msg,
+                        )
+                        return {
+                            "vm_project_id": str(vm_project_id),
+                            "status": "failed",
+                            "vm_state": vm_state,
+                        }
+                    else:
+                        err_msg = f"VM dt_file 업로드 시도 {current_attempts}/{_MAX_DT_FILE_ATTEMPTS} 실패: {upload_err}"
+                        logger.warning("dt_file upload attempt %d failed: project=%s err=%s", current_attempts, str(vm_project_id), upload_err)
+                        await self.dao.set_dt_file_upload_failed(
+                            vm_project_id,
+                            attempts=current_attempts,
+                            message=err_msg,
+                            vm_raw_status=vm_state,
+                        )
+                        return {
+                            "vm_project_id": str(vm_project_id),
+                            "status": "running",
+                            "vm_state": vm_state,
+                        }
 
         elif "ERR" in (vm_state or "").upper():
             # ERROR, ERROR-AppsPro Down, ERROR-ERR-UNKNOWN, ERR-xxx 등 ERR 포함 전부 failed 처리
@@ -2444,6 +2607,9 @@ class VmProjectService:
         vm_aid: str,
         vm_eid: str,
         xml_str: str,
+        upload_file_path: Optional[str] = None,
+        upload_file_name: Optional[str] = None,
+        upload_content_type: str = "application/octet-stream",
     ) -> Dict[str, Any]:
         """
         VM 결과 dt_file(XML)을 ISO에 등록.
@@ -2467,19 +2633,26 @@ class VmProjectService:
 
         # httpx 의 files 인자를 사용하면 multipart/form-data 로 전송된다.
         # 필드 이름은 Swagger 에 나온 대로 "xml" 이어야 함.
-        files = {
-            "xml": ("vm_dt_file.xml", xml_bytes, "application/xml"),
-            # "upload_files" 는 VM 결과 파일을 ISO에 직접 올릴 게 아니라면 생략
-            # 필요하면 나중에 ("", b"") 등으로 비어 있는 필드를 추가할 수 있음.
-        }
-
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
-                r = await client.post(url, files=files)
+                if upload_file_path:
+                    file_name = upload_file_name or os.path.basename(upload_file_path)
+                    with open(upload_file_path, "rb") as fh:
+                        files = [
+                            ("xml", ("vm_dt_file.xml", xml_bytes, "application/xml")),
+                            (
+                                "upload_files",
+                                (file_name, fh, upload_content_type),
+                            ),
+                        ]
+                        r = await client.post(url, files=files)
+                else:
+                    files = {
+                        "xml": ("vm_dt_file.xml", xml_bytes, "application/xml"),
+                    }
+                    r = await client.post(url, files=files)
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
-                # ISO 스펙상 201/206/400 이 올 수 있음.
-                # 400 이면 e.response.text 에 summary / errors 가 있을 것.
                 raise HTTPException(
                     status_code=502,
                     detail=f"ISO vm dt_file create error: {e.response.text}",
@@ -2506,7 +2679,13 @@ class VmProjectService:
         return tmp_path
 
     async def _dp_register_vm_dt_file(
-        self, *, xml_str: str, download_url: Optional[str]
+        self,
+        *,
+        xml_str: str,
+        download_url: Optional[str] = None,
+        file_path: Optional[str] = None,
+        file_name: Optional[str] = None,
+        content_type: str = "application/zip",
     ) -> Any:
         """
         DP에 VM 결과 dt_file 등록.
@@ -2515,7 +2694,7 @@ class VmProjectService:
         download_url이 None이면 XML(링크 포함)만 업로드.
         임시 파일은 finally에서 반드시 삭제한다.
         """
-        if download_url is None:
+        if download_url is None and file_path is None:
             # 파일 첨부 없이 XML(링크)만 등록 → /asset/xml 사용
             # /asset/xml-with-file 은 파일 첨부가 없으면 서버에서 400 반환
             try:
@@ -2525,15 +2704,24 @@ class VmProjectService:
 
         tmp_path = None
         try:
-            tmp_path = await self._stream_download_to_tempfile(download_url)
-            logger.info("VM 결과 임시 저장 완료: %s (%d bytes)", tmp_path, os.path.getsize(tmp_path))
+            target_path = file_path
+            if target_path is None:
+                tmp_path = await self._stream_download_to_tempfile(download_url)
+                target_path = tmp_path
+                logger.info("VM 결과 임시 저장 완료: %s (%d bytes)", tmp_path, os.path.getsize(tmp_path))
 
-            file_name = download_url.rstrip("/").split("/")[-1] or "vm_result.zip"
-            if not file_name.endswith(".zip"):
-                file_name += ".zip"
+            upload_name = file_name
+            if not upload_name:
+                if download_url:
+                    upload_name = download_url.rstrip("/").split("/")[-1] or "vm_result.zip"
+                else:
+                    upload_name = os.path.basename(target_path) or "vm_result.bin"
 
             return await dp_client.upload_xml_with_file(
-                xml_str, file_path=tmp_path, file_name=file_name
+                xml_str,
+                file_path=target_path,
+                file_name=upload_name,
+                content_type=content_type,
             )
         except HTTPException:
             raise
@@ -2543,6 +2731,183 @@ class VmProjectService:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
                 logger.info("VM 결과 임시 파일 삭제: %s", tmp_path)
+
+    async def _load_or_rebuild_process_annotations(self, doc: dict) -> list[dict]:
+        items = doc.get("process_annotations") or []
+        if items:
+            return items
+        rebuilt = await self._rebuild_process_annotations_from_source(doc)
+        if rebuilt and doc.get("_id"):
+            await self.dao.update_process_annotations(doc["_id"], rebuilt)
+        return rebuilt
+
+    def _collect_vm_json_upload_items(
+        self,
+        *,
+        extract_root: str,
+        project_file: dict[str, Any],
+        process_annotations: list[dict],
+        seq_id: int,
+    ) -> list[dict[str, Any]]:
+        processes = project_file.get("process") or []
+        if len(processes) != len(process_annotations):
+            raise ValueError(
+                f"process 수({len(processes)})와 process annotation 수({len(process_annotations)})가 일치하지 않습니다."
+            )
+
+        items: list[dict[str, Any]] = []
+        for idx, process in enumerate(processes, start=1):
+            rel_dir = str(process.get("output_dir_path") or "").strip()
+            if not rel_dir:
+                raise ValueError(f"process {idx} output_dir_path가 비어 있습니다.")
+
+            annotation = process_annotations[idx - 1] or {}
+            workingstep_id = str(annotation.get("workingstep_id") or "").strip()
+            if not workingstep_id:
+                raise ValueError(f"process {idx} workingstep_id가 비어 있습니다.")
+
+            rel_dir_os = os.path.normpath(rel_dir.replace("\\", os.sep).replace("/", os.sep))
+            abs_dir = os.path.normpath(os.path.join(extract_root, rel_dir_os))
+            if not os.path.isdir(abs_dir):
+                raise ValueError(f"process {idx} 결과 폴더를 찾지 못했습니다: {rel_dir}")
+
+            json_paths: list[str] = []
+            for root, _, files in os.walk(abs_dir):
+                for name in files:
+                    if name.lower().endswith(".json"):
+                        json_paths.append(os.path.join(root, name))
+
+            if len(json_paths) != 1:
+                raise ValueError(
+                    f"process {idx} 결과 JSON 파일은 정확히 1개여야 합니다. 현재 {len(json_paths)}개"
+                )
+
+            element_id = f"vm_json_{seq_id:03d}_{idx:03d}"
+            json_path = json_paths[0]
+            items.append(
+                {
+                    "process_index": idx,
+                    "workingstep_id": workingstep_id,
+                    "element_id": element_id,
+                    "file_path": json_path,
+                    "file_name": os.path.basename(json_path),
+                }
+            )
+
+        return items
+
+    async def _create_and_upload_vm_json_dt_files(
+        self,
+        vm_project_id: ObjectId,
+        vm_project_doc: dict,
+        download_link: str,
+    ) -> None:
+        gid = vm_project_doc.get("gid")
+        aid = vm_project_doc.get("aid")
+        eid = vm_project_doc.get("eid")
+        wpid = vm_project_doc.get("wpid")
+        source = vm_project_doc.get("source") or "iso"
+
+        if not (gid and aid and eid):
+            raise HTTPException(
+                status_code=400,
+                detail="vm_project has no gid/aid/eid for vm json dt_file",
+            )
+
+        process_annotations = await self._load_or_rebuild_process_annotations(vm_project_doc)
+        project_file = self._normalize_project_file_dict(
+            vm_project_doc.get("project_file_draft") or {}
+        )
+
+        with tempfile.TemporaryDirectory(prefix="vm-json-result-") as extract_root:
+            zip_path = await self._stream_download_to_tempfile(download_link)
+            try:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(extract_root)
+            finally:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+
+            seq_id = await self._compute_next_vm_seq_id(
+                gid=gid,
+                aid=aid,
+                eid=eid,
+                wpid=wpid,
+                source=source,
+            )
+            upload_items = self._collect_vm_json_upload_items(
+                extract_root=extract_root,
+                project_file=project_file,
+                process_annotations=process_annotations,
+                seq_id=seq_id,
+            )
+
+            upload_info = self._empty_vm_result_upload(VmResultUploadMode.json.value)
+            upload_info["seq_id"] = seq_id
+            upload_info["total_count"] = len(upload_items)
+            upload_info["updated_at"] = datetime.now().isoformat()
+            await self.dao.set_vm_result_upload(vm_project_id, upload_info=upload_info)
+
+            for item in upload_items:
+                xml_str = make_vm_dt_file_xml(
+                    asset_global_id=gid,
+                    vm_asset_id=item["element_id"],
+                    vm_element_id=item["element_id"],
+                    display_name=item["file_name"],
+                    element_description="vm result json file.",
+                    content_type="application/json",
+                    download_file_link="",
+                    gid=gid,
+                    aid=aid,
+                    eid=eid,
+                    wpid=wpid,
+                    workingstep_id=item["workingstep_id"],
+                    process_index=item["process_index"],
+                    seq_id=seq_id,
+                )
+
+                try:
+                    if source == "dp":
+                        await self._dp_register_vm_dt_file(
+                            xml_str=xml_str,
+                            file_path=item["file_path"],
+                            file_name=item["file_name"],
+                            content_type="application/json",
+                        )
+                    else:
+                        await self._iso_register_vm_dt_file(
+                            gid=gid,
+                            vm_aid=item["element_id"],
+                            vm_eid=item["element_id"],
+                            xml_str=xml_str,
+                            upload_file_path=item["file_path"],
+                            upload_file_name=item["file_name"],
+                            upload_content_type="application/json",
+                        )
+                except Exception as exc:
+                    upload_info["failed_index"] = item["process_index"]
+                    upload_info["error_message"] = (
+                        f"process {item['process_index']} ({item['element_id']}) 업로드 실패: {exc}"
+                    )
+                    upload_info["updated_at"] = datetime.now().isoformat()
+                    await self.dao.set_vm_result_upload(
+                        vm_project_id,
+                        upload_info=upload_info,
+                        project_status="failed",
+                        vm_raw_status="COMPLETE",
+                        vm_error_message=upload_info["error_message"],
+                    )
+                    raise HTTPException(status_code=502, detail=upload_info["error_message"])
+
+                upload_info["uploaded_indices"].append(item["process_index"])
+                upload_info["uploaded_element_ids"].append(item["element_id"])
+                upload_info["last_uploaded_index"] = item["process_index"]
+                upload_info["last_uploaded_element_id"] = item["element_id"]
+                upload_info["updated_at"] = datetime.now().isoformat()
+                await self.dao.set_vm_result_upload(
+                    vm_project_id,
+                    upload_info=upload_info,
+                )
 
     async def _create_and_upload_vm_dt_file(
         self,
@@ -2561,7 +2926,8 @@ class VmProjectService:
         eid = vm_project_doc.get("eid")
         wpid = vm_project_doc.get("wpid")
         source = vm_project_doc.get("source") or "iso"
-        upload_result = vm_project_doc.get("upload_result", True)
+        upload_mode = self._resolve_upload_mode_from_doc(vm_project_doc)
+        upload_result = upload_mode != VmResultUploadMode.link.value
 
         if not (gid and aid and eid):
             raise HTTPException(
@@ -2605,12 +2971,12 @@ class VmProjectService:
                 # 링크만 XML에 넣어 DP에 등록
                 await self._dp_register_vm_dt_file(xml_str=xml_str, download_url=None)
             logger.info(
-                "DP vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_result=%s",
-                gid, vm_aid, seq_id, upload_result,
+                "DP vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_mode=%s",
+                gid, vm_aid, seq_id, upload_mode,
             )
         else:
             await self._iso_register_vm_dt_file(gid=gid, vm_aid=vm_aid, vm_eid=vm_eid, xml_str=xml_str)
             logger.info(
-                "ISO vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_result=%s",
-                gid, vm_aid, seq_id, upload_result,
+                "ISO vm dt_file registered: gid=%s vm_aid=%s seq_id=%d upload_mode=%s",
+                gid, vm_aid, seq_id, upload_mode,
             )

@@ -5,6 +5,7 @@ import re
 import xmltodict
 from urllib.parse import urlsplit
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 
 def _get_by_local(d: dict, local: str):
@@ -404,7 +405,7 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
     - content_type
     - path
     - content_oid: <value> (GridFS/ObjectId)
-    - refs: {DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN}
+    - refs: {DT_GLOBAL_ASSET, DT_ASSET, DT_PROJECT, WORKPLAN, WORKINGSTEP}
     - properties: [{"key": ..., "value": ...}, ...]
     """
     doc = xmltodict.parse(
@@ -432,6 +433,7 @@ def parse_dt_file_xml(xml_text: str) -> Dict[str, Any]:
         "DT_ASSET": None,
         "DT_PROJECT": None,
         "WORKPLAN": None,
+        "WORKINGSTEP": None,
     }
 
     ref = _get_by_local(item, "reference")
@@ -522,6 +524,12 @@ def make_vm_dt_file_xml(
     wpid: Optional[str],
     seq_id: int,
     download_file_link: str = "",  # ISO용 S3 URL; DP는 파일 직접 업로드하므로 빈값
+    vm_element_id: Optional[str] = None,
+    display_name: str = "",
+    element_description: str = "vm result file.",
+    content_type: str = "application/zip",
+    workingstep_id: Optional[str] = None,
+    process_index: Optional[int] = None,
     now: Optional[datetime] = None,
 ) -> str:
     """
@@ -531,53 +539,57 @@ def make_vm_dt_file_xml(
     now = now or datetime.now()
     date_str = now.strftime("%Y%m%d %H%M%S")
     wpid_val = wpid or ""
+    vm_element_id = vm_element_id or vm_asset_id
+    workingstep_val = workingstep_id or ""
 
     # vm dt_file 예시 구조에 맞춰 생성
     xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <dt_asset xmlns="http://digital-thread.re/dt_asset"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           schemaVersion="v31">
-  <asset_global_id>{asset_global_id}</asset_global_id>
-  <id>{vm_asset_id}</id>
+  <asset_global_id>{escape(asset_global_id)}</asset_global_id>
+  <id>{escape(vm_asset_id)}</id>
   <asset_kind>instance</asset_kind>
   <dt_elements xsi:type="dt_file">
-    <element_id>{vm_asset_id}</element_id>
+    <element_id>{escape(vm_element_id)}</element_id>
     <category>VM</category>
-    <display_name></display_name>
-    <element_description>vm result file.</element_description>
-    <content_type>application/zip</content_type>
+    <display_name>{escape(display_name)}</display_name>
+    <element_description>{escape(element_description)}</element_description>
+    <content_type>{escape(content_type)}</content_type>
     <value></value>
-    <path>{download_file_link}</path>
+    <path>{escape(download_file_link)}</path>
     <reference>
       <element_id></element_id>
       <keys>
         <key>DT_GLOBAL_ASSET</key>
-        <value>{gid}</value>
+        <value>{escape(gid)}</value>
       </keys>
       <keys>
         <key>DT_ASSET</key>
-        <value>{aid}</value>
+        <value>{escape(aid)}</value>
       </keys>
       <keys>
         <key>DT_PROJECT</key>
-        <value>{eid}</value>
+        <value>{escape(eid)}</value>
       </keys>
       <keys>
         <key>WORKPLAN</key>
-        <value>{wpid_val}</value>
+        <value>{escape(wpid_val)}</value>
       </keys>
+      {"<keys><key>WORKINGSTEP</key><value>" + escape(workingstep_val) + "</value></keys>" if workingstep_val else ""}
     </reference>
     <properties>
       <key>NO_CODE</key>
-      <value>{vm_asset_id}</value>
+      <value>{escape(vm_element_id)}</value>
     </properties>
     <properties>
       <key>SEQ_ID</key>
       <value>{seq_id}</value>
     </properties>
+    {"<properties><key>PROCESS_INDEX</key><value>" + str(process_index) + "</value></properties>" if process_index is not None else ""}
     <properties>
       <key>Date</key>
-      <value>{date_str}</value>
+      <value>{escape(date_str)}</value>
     </properties>
   </dt_elements>
 </dt_asset>
