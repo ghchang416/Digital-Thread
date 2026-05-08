@@ -71,5 +71,11 @@ app.include_router(vm_project_router, prefix="/api/v1")
 app.include_router(dp_router, prefix="/api/v1")
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
-if frontend_dir.exists():
-    app.mount("/ui", StaticFiles(directory=str(frontend_dir), html=True), name="vm-ui")
+frontend_dist_dir = frontend_dir / "dist"
+frontend_static_dir = frontend_dist_dir if frontend_dist_dir.exists() else frontend_dir
+if frontend_static_dir.exists():
+    app.mount(
+        "/ui",
+        StaticFiles(directory=str(frontend_static_dir), html=True),
+        name="vm-ui",
+    )

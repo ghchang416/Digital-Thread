@@ -74,8 +74,26 @@ services:
     networks:
       - kitech_network
 
+  vm-middle-front:
+    build:
+      context: ./VM_middle/frontend
+    container_name: vm_middle_front
+    depends_on:
+      - vm-middle
+    volumes:
+      - ./VM_middle/frontend:/app
+      - vm_middle_front_node_modules:/app/node_modules
+    ports:
+      - "3010:5173"
+    environment:
+      VITE_API_TARGET: http://vm-middle:8000
+    restart: unless-stopped
+    networks:
+      - kitech_network
+
 volumes:
   mongo_data:
+  vm_middle_front_node_modules:
 
 networks:
   kitech_network:
