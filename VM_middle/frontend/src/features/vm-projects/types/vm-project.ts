@@ -89,6 +89,60 @@ export interface ProcessAnnotationsResponse {
   items: ProcessAnnotationItem[];
 }
 
+export type Point3 = [number, number, number];
+
+export interface ToolpathStockBox {
+  min: Point3;
+  max: Point3;
+  source: string;
+}
+
+export interface ToolpathBounds {
+  min: Point3;
+  max: Point3;
+}
+
+export interface ToolpathSegment {
+  process_index: number;
+  file_path: string;
+  type: string;
+  mode: string;
+  start: Point3;
+  end: Point3;
+  feedrate: number | null;
+  arc_i?: number | null;
+  arc_j?: number | null;
+  arc_k?: number | null;
+}
+
+export interface ToolpathFileSummary {
+  process_index: number;
+  file_path: string | null;
+  zip_entry?: string | null;
+  segment_count: number;
+  type_counts: Record<string, number>;
+  error?: string | null;
+}
+
+export interface ToolpathPreviewSummary {
+  segment_count: number;
+  returned_segment_count: number;
+  truncated: boolean;
+  sampling: string;
+  max_segments: number;
+  process_count: number;
+  type_counts: Record<string, number>;
+  errors: string[];
+}
+
+export interface ToolpathPreviewResponse {
+  stock: ToolpathStockBox | null;
+  toolpath_bounds: ToolpathBounds | null;
+  segments: ToolpathSegment[];
+  files: ToolpathFileSummary[];
+  summary: ToolpathPreviewSummary;
+}
+
 export interface VmProjectListFilters {
   q: string;
   status: VmProjectStatus | "";

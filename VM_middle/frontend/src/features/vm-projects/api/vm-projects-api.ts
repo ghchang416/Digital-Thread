@@ -10,6 +10,7 @@ import type {
   StartVmResponse,
   StockItemsResponse,
   StockPatchPayload,
+  ToolpathPreviewResponse,
   VmProjectDetail,
   VmProjectCreatePayload,
   VmProjectCreateResponse,
@@ -46,6 +47,15 @@ export function getStockItems(q = "") {
   if (q.trim()) params.set("q", q.trim());
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return apiGet<StockItemsResponse>(`${VM_PROJECTS_BASE}/stocks${suffix}`);
+}
+
+export function getToolpathPreview(id: string, maxSegments = 20_000) {
+  const params = new URLSearchParams({
+    max_segments: String(maxSegments),
+  });
+  return apiGet<ToolpathPreviewResponse>(
+    `${VM_PROJECTS_BASE}/${encodeURIComponent(id)}/toolpath-preview?${params.toString()}`,
+  );
 }
 
 export function patchVmProjectStock(id: string, payload: StockPatchPayload) {

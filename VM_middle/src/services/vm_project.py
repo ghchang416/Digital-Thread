@@ -34,12 +34,17 @@ from src.schemas.vm_project import (
     VmProjectDetailOut,
     StockItemOut,
     StockItemsResponse,
+    ToolpathPreviewOut,
 )
 from src.utils.nc_splitter import (
     extract_tool_numbers_from_paths,  # ([saved_paths]) -> List[int|None]
     process_nc_text,  # (nc_text: str, output_dir: str, base_filename_with_ext: str) -> List[str]
 )
 from src.utils.stock import lookup_stock_code, is_known_stock_code
+from src.utils.toolpath_preview import (
+    build_toolpath_preview_from_zip,
+    parse_stock_box,
+)
 from src.utils.xml_parser import (
     extract_material_ref_from_project_xml,  # -> Optional[(gid, aid, eid)]
     extract_tool_refs_in_order,  # (project_xml, wpid) -> [{gid, aid, eid, tool_element_id, ...}]
@@ -1749,6 +1754,143 @@ class VmProjectService:
             upload_mode=upload_mode,
             vm_result_upload=vm_result_upload,
         )
+
+    async def get_toolpath_preview(
+        self,
+        _id: ObjectId,
+        *,
+        max_segments: int = 20000,
+        include_rapid: bool = True,
+        process_index: Optional[int] = None,
+    ) -> ToolpathPreviewOut:
+        doc = await self.dao.get(_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="vm_project not found")
+
+        max_segments = min(50000, max(1, int(max_segments)))
+        errors: list[str] = []
+
+        pf_dict = self._normalize_project_file_dict(
+            doc.get("project_file_draft") or {}
+        )
+        project_file = ProjectFileOut(**pf_dict)
+        stock, stock_error = parse_stock_box(project_file.stock_size)
+        if stock_error:
+            errors.append(stock_error)
+
+        latest = doc.get("latest_files") or {}
+        nc_file_id = latest.get("nc-split-zip")
+        if not nc_file_id:
+            errors.append("nc-split-zip file is not available")
+            return ToolpathPreviewOut(
+                stock=stock,
+                toolpath_bounds=None,
+                segments=[],
+                files=[],
+                summary={
+                    "segment_count": 0,
+                    "returned_segment_count": 0,
+                    "truncated": False,
+                    "sampling": "none",
+                    "max_segments": max_segments,
+                    "process_count": project_file.process_count,
+                    "type_counts": {},
+                    "errors": errors,
+                },
+            )
+
+        try:
+            vm_file_id = (
+                nc_file_id
+                if isinstance(nc_file_id, ObjectId)
+                else ObjectId(str(nc_file_id))
+            )
+        except Exception as e:
+            errors.append(f"invalid nc-split-zip file id: {e}")
+            return ToolpathPreviewOut(
+                stock=stock,
+                toolpath_bounds=None,
+                segments=[],
+                files=[],
+                summary={
+                    "segment_count": 0,
+                    "returned_segment_count": 0,
+                    "truncated": False,
+                    "sampling": "none",
+                    "max_segments": max_segments,
+                    "process_count": project_file.process_count,
+                    "type_counts": {},
+                    "errors": errors,
+                },
+            )
+
+        vmf_doc = await self.vm_file_svc.dao.get(vm_file_id)
+        if not vmf_doc or not vmf_doc.get("gridfs_id"):
+            errors.append("nc-split-zip vm_file or gridfs_id is missing")
+            return ToolpathPreviewOut(
+                stock=stock,
+                toolpath_bounds=None,
+                segments=[],
+                files=[],
+                summary={
+                    "segment_count": 0,
+                    "returned_segment_count": 0,
+                    "truncated": False,
+                    "sampling": "none",
+                    "max_segments": max_segments,
+                    "process_count": project_file.process_count,
+                    "type_counts": {},
+                    "errors": errors,
+                },
+            )
+
+        try:
+            zip_bytes = await self.vm_file_svc.filestore.gfs_get_bytes(
+                vmf_doc["gridfs_id"]
+            )
+            preview = await asyncio.to_thread(
+                build_toolpath_preview_from_zip,
+                zip_bytes=zip_bytes,
+                processes=project_file.process,
+                max_segments=max_segments,
+                include_rapid=include_rapid,
+                process_index=process_index,
+            )
+        except zipfile.BadZipFile:
+            errors.append("nc-split-zip is not a valid zip file")
+            preview = self._empty_toolpath_preview(max_segments, project_file.process_count)
+        except Exception as e:
+            logger.exception("Toolpath preview build failed: %s", e)
+            errors.append(f"toolpath preview failed: {e}")
+            preview = self._empty_toolpath_preview(max_segments, project_file.process_count)
+
+        preview["stock"] = stock
+        preview["summary"]["errors"] = [
+            *errors,
+            *[
+                f"process {item.get('process_index')}: {item.get('error')}"
+                for item in preview.get("files", [])
+                if item.get("error")
+            ],
+        ]
+        return ToolpathPreviewOut(**preview)
+
+    @staticmethod
+    def _empty_toolpath_preview(max_segments: int, process_count: int) -> dict:
+        return {
+            "toolpath_bounds": None,
+            "segments": [],
+            "files": [],
+            "summary": {
+                "segment_count": 0,
+                "returned_segment_count": 0,
+                "truncated": False,
+                "sampling": "none",
+                "max_segments": max_segments,
+                "process_count": process_count,
+                "type_counts": {},
+            },
+        }
 
     async def list_stock_items(self, q: str | None = None) -> StockItemsResponse:
         """

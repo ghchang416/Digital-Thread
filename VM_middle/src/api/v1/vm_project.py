@@ -14,6 +14,7 @@ from src.schemas.vm_project import (
     VmProjectStatusEnum,
     VmProjectDetailOut,
     StockItemsResponse,
+    ToolpathPreviewOut,
 )
 from src.services.vm_project import VmProjectService
 from src.database import get_vm_project_service
@@ -98,6 +99,35 @@ async def get_vm_project_thumbnail(
     """
     content, media_type = await svc.get_thumbnail(ObjectId(vm_project_id))
     return Response(content=content, media_type=media_type)
+
+
+@router.get(
+    "/{vm_project_id}/toolpath-preview",
+    response_model=ToolpathPreviewOut,
+    summary="NC toolpath와 stock box 3D preview 데이터",
+)
+async def get_toolpath_preview(
+    vm_project_id: str,
+    max_segments: int = Query(
+        20000,
+        ge=1,
+        le=50000,
+        description="응답에 포함할 최대 segment 수",
+    ),
+    include_rapid: bool = Query(True, description="RAPID 이동 segment 포함 여부"),
+    process_index: int | None = Query(
+        None,
+        ge=0,
+        description="특정 process index만 조회할 때 사용",
+    ),
+    svc: VmProjectService = Depends(get_vm_project_service),
+):
+    return await svc.get_toolpath_preview(
+        ObjectId(vm_project_id),
+        max_segments=max_segments,
+        include_rapid=include_rapid,
+        process_index=process_index,
+    )
 
 
 @router.post("/{vm_project_id}/poll")

@@ -22,6 +22,7 @@ import {
   startVmProject,
 } from "@/features/vm-projects/api/vm-projects-api";
 import { StatusBadge } from "@/features/vm-projects/components/status-badge";
+import { ToolpathAlignmentPanel } from "@/features/vm-projects/components/toolpath-alignment-viewer";
 
 import type {
   ProcessAnnotationItem,
@@ -323,6 +324,7 @@ function StockEditor({ detail }: { detail: VmProjectDetail }) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["vm-project", detail.id] }),
         queryClient.invalidateQueries({ queryKey: ["vm-projects"] }),
+        queryClient.invalidateQueries({ queryKey: ["toolpath-preview", detail.id] }),
       ]);
     },
   });
@@ -459,89 +461,14 @@ function StockEditor({ detail }: { detail: VmProjectDetail }) {
         </div>
       </form>
 
-      <StockToolpathPreview
+      <ToolpathAlignmentPanel
+        projectId={detail.id}
         stockSizeFields={stockSizeFields}
+        stockSizeError={stockSizeError}
         processCount={draft.process_count}
       />
     </div>
   );
-}
-
-function StockToolpathPreview({
-  stockSizeFields,
-  processCount,
-}: {
-  stockSizeFields: StockSizeFields;
-  processCount: number;
-}) {
-  const metrics = getStockBoxMetrics(stockSizeFields);
-
-  return (
-    <aside className="stock-preview" aria-label="Toolpath and stock alignment preview">
-      <div className="stock-preview__header">
-        <div>
-          <span>NC overlay</span>
-          <strong>Toolpath Alignment</strong>
-        </div>
-        <span className="preview-badge">screen only</span>
-      </div>
-
-      <div className="stock-preview__canvas" aria-hidden="true">
-        <svg viewBox="0 0 420 260" role="img">
-          <defs>
-            <pattern id="stock-grid" width="24" height="24" patternUnits="userSpaceOnUse">
-              <path d="M 24 0 L 0 0 0 24" />
-            </pattern>
-          </defs>
-          <rect className="stock-preview__grid" x="0" y="0" width="420" height="260" />
-          <g className="stock-preview__box">
-            <polygon points="96,82 302,82 352,122 146,122" />
-            <polygon points="146,122 352,122 352,198 146,198" />
-            <polygon points="96,82 146,122 146,198 96,158" />
-            <polyline points="96,82 302,82 352,122 352,198 146,198 96,158 96,82" />
-            <line x1="302" y1="82" x2="302" y2="158" />
-            <line x1="302" y1="158" x2="352" y2="198" />
-          </g>
-          <path
-            className="stock-preview__toolpath stock-preview__toolpath--shadow"
-            d="M 82 182 C 118 143, 152 145, 184 165 S 240 187, 264 135 S 322 74, 354 104"
-          />
-          <path
-            className="stock-preview__toolpath"
-            d="M 82 176 C 118 137, 152 139, 184 159 S 240 181, 264 129 S 322 68, 354 98"
-          />
-          <circle cx="82" cy="176" r="5" className="stock-preview__node" />
-          <circle cx="354" cy="98" r="5" className="stock-preview__node" />
-        </svg>
-      </div>
-
-      <div className="stock-preview__metrics">
-        <MetaItem label="x_span" value={metrics.xSpan} />
-        <MetaItem label="y_span" value={metrics.ySpan} />
-        <MetaItem label="z_span" value={metrics.zSpan} />
-        <MetaItem label="nc_steps" value={String(processCount)} />
-      </div>
-    </aside>
-  );
-}
-
-function getStockBoxMetrics(fields: StockSizeFields) {
-  return {
-    xSpan: formatAxisSpan(fields.xMin, fields.xMax),
-    ySpan: formatAxisSpan(fields.yMin, fields.yMax),
-    zSpan: formatAxisSpan(fields.zMin, fields.zMax),
-  };
-}
-
-function formatAxisSpan(minValue: string, maxValue: string) {
-  const min = Number(minValue);
-  const max = Number(maxValue);
-  if (Number.isNaN(min) || Number.isNaN(max)) return "-";
-  return `${formatMetricValue(max - min)} mm`;
-}
-
-function formatMetricValue(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 function parseStockSize(value: string | null | undefined): StockSizeFields {
@@ -757,6 +684,7 @@ async function refreshVmProjectQueries(
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["vm-project", id] }),
     queryClient.invalidateQueries({ queryKey: ["vm-projects"] }),
+    queryClient.invalidateQueries({ queryKey: ["toolpath-preview", id] }),
   ]);
 }
 
@@ -813,6 +741,7 @@ function ProcessEditor({
           queryKey: ["vm-project", detail.id, "process-annotations"],
         }),
         queryClient.invalidateQueries({ queryKey: ["vm-projects"] }),
+        queryClient.invalidateQueries({ queryKey: ["toolpath-preview", detail.id] }),
       ]);
     },
   });

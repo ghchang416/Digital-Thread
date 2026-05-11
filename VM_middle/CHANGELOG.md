@@ -24,6 +24,125 @@ VM Middle은 ISO 14649 기반의 디지털 스레드 플랫폼에서 가상가�
 
 ---
 
+## 2026-05-08 — NC Toolpath + Stock 3D Alignment 구현
+
+### 개발 배경
+- Project Detail의 Stock 섹션에서 소재 min/max box와 NC toolpath를 같은 3D 좌표계에 겹쳐 표시하도록 구현했다.
+- 목적은 VM 실행 전 소재 위치가 툴패스 범위와 맞는지 빠르게 확인하는 것이다.
+- 소재 좌표는 저장 전 입력 draft도 즉시 반영되도록 하여, 사용자가 stock 값을 조정하면서 3D overlay를 확인할 수 있게 했다.
+
+### 적용 범위
+- 백엔드
+  - `src/utils/nc_parser.py`
+  - `src/utils/toolpath_preview.py`
+  - `src/schemas/vm_project.py`
+  - `src/services/vm_project.py`
+  - `src/api/v1/vm_project.py`
+- 프론트엔드
+  - `frontend/src/features/vm-projects/api/vm-projects-api.ts`
+  - `frontend/src/features/vm-projects/types/vm-project.ts`
+  - `frontend/src/features/vm-projects/components/project-detail-drawer.tsx`
+  - `frontend/src/features/vm-projects/components/toolpath-alignment-viewer.tsx`
+  - `frontend/src/features/vm-projects/components/toolpath-alignment-canvas.tsx`
+  - `frontend/src/shared/styles/base.css`
+  - `frontend/vite.config.ts`
+- 의존성
+  - `three`
+  - `@types/three`
+
+### 구현 방식
+- `GET /api/v1/vm-project/{id}/toolpath-preview` API를 추가했다.
+- API는 VM 프로젝트의 `latest_files["nc-split-zip"]`에서 `ncdata.zip`을 읽고, `project_file_draft.process[].file_path`와 zip 내부 NC 파일을 매칭한다.
+- 매칭된 NC 파일은 `src/utils/nc_parser.py`로 승격한 `NCParser`로 파싱해 `start`, `end`, `type`, `feedrate`, `mode`, arc 메타데이터를 포함한 segment JSON으로 변환한다.
+- 최초 구현 때 `data/nc_visualizer_tool`을 직접 import하던 방식은 제거했다. `data` 폴더는 git/배포 대상이 아니므로, 실제 런타임 소스는 `src/utils/nc_parser.py`만 바라보게 정리했다.
+- 응답에는 stock box, toolpath bounds, segment 목록, process별 file summary, segment type count, sampling 상태를 포함한다.
+- 큰 NC 파일 대응을 위해 `max_segments` query를 두고, 전체 segment가 제한을 넘으면 균등 sampling으로 반환한다. 기본값은 `20000`, 최대값은 `50000`이다.
+- React에서는 `toolpath-preview`를 독립 TanStack Query로 분리하고, Stock/Process 저장 성공 및 VM action 후 관련 query를 invalidate한다.
+- Three.js viewer는 lazy import로 분리해 초기 bundle에 Three.js를 직접 포함하지 않게 했다.
+- viewer는 소재 box를 반투명 박스와 edge line으로 표시하고, toolpath는 segment type별 색상 라인으로 표시한다.
+- 좌표계는 NC `[x, y, z]`를 Three.js `[x, z, y]`로 매핑해 기계 Z축이 화면의 vertical 축으로 보이게 했다.
+- `ISO`, `TOP`, `FRONT`, `SIDE`, `FIT` 뷰 버튼을 추가했다.
+
+### 호환성/주의사항
+- VM 실행 payload와 `project.prj` 포맷은 변경하지 않았다.
+- 3D preview는 읽기 전용 표시 API이며, stock 저장 전 draft 변경은 프론트 상태에만 반영된다.
+- 원호는 현재 `NCParser`가 제공하는 start/end chord 기준으로 표시하며, arc interpolation은 다음 개선 항목으로 남겼다.
+- `ncdata.zip`이 없거나 파일 매칭에 실패해도 API는 500으로 실패하지 않고 빈 preview와 `summary.errors`를 반환하도록 했다.
+
+### 검증 내역
+- `docker exec vm_middle python -m py_compile ...`로 변경된 FastAPI 파일 문법 검증 통과.
+- 실제 VM 프로젝트 `iso301 vm test project` 기준 toolpath preview API 응답 확인.
+  - stock bounds: `[-51,-41,-50]` ~ `[51,41,1]`
+  - toolpath bounds: `[-75,-49.038,-40.997]` ~ `[73,48.1,150]`
+  - segment: `6869`개 반환, errors 없음.
+- `docker exec vm_middle_front npm run typecheck` 통과.
+- `docker exec vm_middle_front npm run build` 통과.
+- FastAPI `/ui/` 정적 asset 및 lazy Three.js chunk 200 응답 확인.
+- 브라우저에서 Project Detail > Stock 영역을 열어 3D canvas 렌더링 확인.
+- `x_max`를 `51`에서 `101`로 임시 변경했을 때 저장 없이 `x_span`이 `102 mm`에서 `152 mm`로 즉시 변경되고 소재 box가 갱신되는 것을 확인한 뒤 원복했다.
+
+### 남은 작업
+- G2/G3 원호 interpolation을 추가해 곡선 toolpath 표시 정확도를 높인다.
+- 매우 큰 NC 파일은 서버 캐시 또는 precomputed preview 저장 방식으로 응답 시간을 더 줄일 수 있다.
+- toolpath process별 on/off 필터, segment type 필터, stock/toolpath bounds 자동 비교 경고를 추가할 수 있다.
+
+---
+
+## 2026-05-08 — NC Toolpath 3D 표시 기능 사전 분석
+
+### 개발 배경
+- Project Detail의 Stock 섹션에 추가한 `Toolpath Alignment` 영역을 실제 기능으로 확장하기 위해, `data/nc_visualizer_tool` 아래 기존 시각화 도구를 분석했다.
+- 목표는 NC 파일에서 추출한 툴패스 좌표와 `project_file_draft.stock_size`의 소재 min/max 박스를 같은 3D 좌표계에 표시해 소재 위치가 툴패스와 맞는지 확인하는 것이다.
+
+### 적용 범위
+- `data/nc_visualizer_tool/libs/occ_viewer/README.md`
+- `data/nc_visualizer_tool/libs/occ_viewer/interaction.py`
+- `data/nc_visualizer_tool/libs/nc_toolkit/README.md`
+- `data/nc_visualizer_tool/libs/nc_toolkit/nc_parser.py`
+- `data/nc_visualizer_tool/libs/nc_toolkit/dnc_sender.py`
+- `data/test_data/merge.tap`
+
+### 분석 결과
+- `occ_viewer`는 `pythonOCC(OpenCASCADE)`와 `PySide6` 기반의 데스크톱 3D 뷰어 인터랙션 모듈이다.
+- `occ_viewer`는 `AIS_ViewController`, `AIS_AnimationCamera`, `QTimer`, Qt mouse event에 강하게 의존하므로 React 브라우저 UI에 직접 재사용하기는 어렵다.
+- 다만 ViewCube, 회전, 이동, 줌, 선택, fit-to-view 같은 3D 조작 UX는 React Three.js viewer 설계에 참고할 수 있다.
+- `nc_toolkit`의 `NCParser`는 Python 표준 라이브러리만 사용하는 NC/G-Code 파서이므로 FastAPI 백엔드에서 재사용 가능하다.
+- `NCParser.parse_as_segments()`는 `start`, `end`, `type`, `feedrate`, `mode`, 원호용 `arc_i/j/k`를 포함한 segment 목록을 반환한다.
+- `dnc_sender`는 NC Main/Sub 프로그램 변환과 DNC 전송 placeholder 성격이므로 이번 3D 표시 기능에는 직접 사용하지 않는다.
+
+### 샘플 검증
+- `data/test_data/merge.tap`를 `NCParser.parse_as_segments()`로 파싱했다.
+- 결과는 segment `6883`개이며, 유형별로 `FEED 6798`, `RAPID 66`, `SKIM 17`, `PLUNGE 2`가 추출되었다.
+- 추출된 toolpath bounds는 `x=-75.0~73.0`, `y=-49.038~48.1`, `z=-40.997~150.0`이었다.
+- G2/G3 원호 segment는 `225`개로 감지되었다.
+
+### 구현 방향
+- 백엔드에 `GET /api/v1/vm-project/{id}/toolpath-preview` API를 추가한다.
+- API는 `latest_files["nc-split-zip"]`에서 `ncdata.zip`을 읽고, `project_file_draft.process[].file_path` 기준으로 NC 파일을 찾아 `NCParser`로 segment JSON을 생성한다.
+- API 응답에는 stock min/max, toolpath bounds, segment 목록, segment type별 count, process별 file summary를 포함한다.
+- 프론트는 기존 `Toolpath Alignment` placeholder를 Three.js 기반 3D viewer로 교체하고, stock box와 toolpath polyline을 같은 좌표계에 렌더링한다.
+- 원호는 1차 구현에서는 start/end chord로 표시하고, 이후 arc interpolation을 추가해 곡선 정확도를 높인다.
+
+### 호환성/주의사항
+- `project.prj` 포맷과 VM 실행 payload는 변경하지 않는다.
+- 3D preview 데이터는 UI 표시용 API 응답으로만 제공하며, VM 실행에 필요한 `project_file_draft`에는 새로운 시각화 메타데이터를 섞지 않는다.
+- 큰 NC 파일은 segment 수가 많을 수 있으므로 API에서 `max_segments` 또는 sampling/truncation 정책을 둔다.
+- `nc_toolkit` README에는 원호 16분할 보간이 언급되어 있으나, 현재 `nc_parser.py` 구현은 원호 정보를 보존할 뿐 실제 중간점 보간은 수행하지 않는다.
+
+### 남은 작업
+- 백엔드 schema/service/router 추가
+- `ncdata.zip` GridFS 로드 및 zip 내부 파일 매칭 구현
+- React API/type/query 추가
+- Three.js 또는 경량 canvas 기반 3D viewer 구현
+- 실제 VM 프로젝트 데이터와 샘플 `merge.tap` 기준 화면 검증
+
+### 구현 계획 문서
+- `docs/toolpath_alignment_implementation_plan.md`를 작성했다.
+- 문서에는 백엔드 `toolpath-preview` API, `NCParser` 활용 방식, `ncdata.zip` GridFS 로드, zip 내부 NC 파일 매칭, segment 제한 정책, React TanStack Query 연결, Three.js viewer, stock 좌표 live preview, 검증 계획을 포함했다.
+- 핵심 설계는 toolpath는 서버 API segment를 사용하고, 소재 box는 현재 Stock form draft 값을 우선 사용해 저장 전에도 3D viewer에 즉시 반영하는 방식이다.
+
+---
+
 ## 2026-05-07 — React frontend Skill 활용 보고서 작성
 
 ### 개발 배경

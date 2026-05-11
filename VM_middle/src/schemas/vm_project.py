@@ -114,6 +114,61 @@ class ProcessAnnotationsResponse(BaseModel):
     items: List[ProcessAnnotationItemOut]
 
 
+Point3 = tuple[float, float, float]
+
+
+class ToolpathStockBoxOut(BaseModel):
+    min: Point3
+    max: Point3
+    source: str
+
+
+class ToolpathBoundsOut(BaseModel):
+    min: Point3
+    max: Point3
+
+
+class ToolpathSegmentOut(BaseModel):
+    process_index: int
+    file_path: str
+    type: str
+    mode: str
+    start: Point3
+    end: Point3
+    feedrate: Optional[float] = None
+    arc_i: Optional[float] = None
+    arc_j: Optional[float] = None
+    arc_k: Optional[float] = None
+
+
+class ToolpathFileSummaryOut(BaseModel):
+    process_index: int
+    file_path: Optional[str] = None
+    zip_entry: Optional[str] = None
+    segment_count: int
+    type_counts: Dict[str, int] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class ToolpathPreviewSummaryOut(BaseModel):
+    segment_count: int
+    returned_segment_count: int
+    truncated: bool
+    sampling: str
+    max_segments: int
+    process_count: int
+    type_counts: Dict[str, int] = Field(default_factory=dict)
+    errors: List[str] = Field(default_factory=list)
+
+
+class ToolpathPreviewOut(BaseModel):
+    stock: Optional[ToolpathStockBoxOut] = None
+    toolpath_bounds: Optional[ToolpathBoundsOut] = None
+    segments: List[ToolpathSegmentOut] = Field(default_factory=list)
+    files: List[ToolpathFileSummaryOut] = Field(default_factory=list)
+    summary: ToolpathPreviewSummaryOut
+
+
 class VmResultUploadOut(BaseModel):
     mode: Optional[str] = None
     seq_id: Optional[int] = None
