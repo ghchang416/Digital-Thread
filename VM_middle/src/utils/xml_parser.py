@@ -530,6 +530,7 @@ def make_vm_dt_file_xml(
     content_type: str = "application/zip",
     workingstep_id: Optional[str] = None,
     process_index: Optional[int] = None,
+    vm_job_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> str:
     """
@@ -587,6 +588,7 @@ def make_vm_dt_file_xml(
       <value>{seq_id}</value>
     </properties>
     {"<properties><key>PROCESS_INDEX</key><value>" + str(process_index) + "</value></properties>" if process_index is not None else ""}
+    {"<properties><key>VM_JOB_ID</key><value>" + escape(str(vm_job_id)) + "</value></properties>" if vm_job_id else ""}
     <properties>
       <key>Date</key>
       <value>{escape(date_str)}</value>

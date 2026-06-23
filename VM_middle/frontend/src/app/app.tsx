@@ -20,6 +20,8 @@ const INITIAL_FILTERS: VmProjectListFilters = {
   size: 12,
 };
 
+const VM_STATUS_REFETCH_INTERVAL_MS = 5_000;
+
 export function App() {
   const [filters, setFilters] = useState<VmProjectListFilters>(INITIAL_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -28,12 +30,18 @@ export function App() {
   const projectsQuery = useQuery({
     queryKey: ["vm-projects", filters],
     queryFn: () => getVmProjects(filters),
+    refetchInterval: (query) =>
+      query.state.data?.items.some((item) => item.status === "running")
+        ? VM_STATUS_REFETCH_INTERVAL_MS
+        : false,
   });
 
   const detailQuery = useQuery({
     queryKey: ["vm-project", selectedId],
     queryFn: () => getVmProjectDetail(selectedId!),
     enabled: Boolean(selectedId),
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? VM_STATUS_REFETCH_INTERVAL_MS : false,
   });
 
   const annotationsQuery = useQuery({

@@ -64,6 +64,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class RetryableVmResultUploadError(Exception):
+    """Temporary result-upload failure that should keep VM project retryable."""
+
 # ---------------- 내부 유틸 (정규식) ----------------
 _COORD_RE = re.compile(r"\b([xyz])\s+coordinates_mm\s*:\s*([+-]?\d+(?:\.\d+)?)", re.I)
 _MIN_RE = re.compile(r"\bmin_([xyz])\s*[:=]\s*([+-]?\d+(?:\.\d+)?)", re.I)
@@ -417,6 +421,298 @@ class VmProjectService:
             "error_message": None,
             "updated_at": datetime.now().isoformat(),
         }
+
+    @staticmethod
+    def _parse_vm_json_element_id(element_id: str | None) -> tuple[int, int] | None:
+        m = re.match(r"^vm_json_(\d{3})_(\d{3})$", str(element_id or "").strip())
+        if not m:
+            return None
+        return int(m.group(1)), int(m.group(2))
+
+    @staticmethod
+    def _build_vm_json_element_id(seq_id: int, process_index: int) -> str:
+        return f"vm_json_{seq_id:03d}_{process_index:03d}"
+
+    @staticmethod
+    def _extract_dp_item_refs(item: Mapping[str, Any] | None) -> dict[str, str]:
+        refs: dict[str, str] = {}
+        if not isinstance(item, Mapping):
+            return refs
+        reflist = item.get("reflist") or []
+        if isinstance(reflist, Mapping):
+            reflist = [reflist]
+        for ref in reflist:
+            if not isinstance(ref, Mapping):
+                continue
+            keys = ref.get("keys") or []
+            if isinstance(keys, Mapping):
+                keys = [keys]
+            for kv in keys:
+                if not isinstance(kv, Mapping):
+                    continue
+                key = str(kv.get("key") or "").strip()
+                val = kv.get("value")
+                if isinstance(val, Mapping):
+                    val = val.get("#text")
+                if key:
+                    refs[key] = str(val or "").strip()
+        return refs
+
+    @staticmethod
+    def _properties_to_dict(properties: list[dict] | None) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for item in properties or []:
+            if not isinstance(item, Mapping):
+                continue
+            key = str(item.get("key") or "").strip()
+            if key:
+                out[key] = str(item.get("value") or "").strip()
+        return out
+
+    @staticmethod
+    def _parse_iso_ts(value: Any) -> float:
+        if not isinstance(value, str) or not value.strip():
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.strip()).timestamp()
+        except ValueError:
+            return 0.0
+
+    async def _list_dp_elements_by_gid_all(
+        self,
+        gid: str,
+        *,
+        page_size: int = 200,
+        max_pages: int = 100,
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        page = 0
+        while page < max_pages:
+            try:
+                result = await dp_client.list_elements_by_gid(
+                    gid, page=page, size=page_size
+                )
+            except Exception as exc:
+                raise RetryableVmResultUploadError(
+                    f"DP VM 결과 목록 조회 실패: {exc}"
+                ) from exc
+
+            content = result.get("content") or []
+            if not isinstance(content, list):
+                content = []
+            items.extend([item for item in content if isinstance(item, dict)])
+
+            total_pages = result.get("totalPages")
+            if isinstance(total_pages, int) and total_pages > 0:
+                if page + 1 >= total_pages:
+                    break
+            elif len(content) < page_size:
+                break
+            page += 1
+        return items
+
+    def _dp_vm_json_refs_match(
+        self,
+        refs: Mapping[str, str] | None,
+        *,
+        gid: str,
+        eid: str,
+        wpid: Optional[str],
+    ) -> bool:
+        refs = refs or {}
+        if (refs.get("DT_GLOBAL_ASSET") or "") != gid:
+            return False
+        if (refs.get("DT_PROJECT") or "") != eid:
+            return False
+        if wpid and (refs.get("WORKPLAN") or "") != wpid:
+            return False
+        return True
+
+    async def _list_existing_dp_vm_results(
+        self,
+        *,
+        gid: str,
+        eid: str,
+        wpid: Optional[str],
+    ) -> list[dict[str, Any]]:
+        elements = await self._list_dp_elements_by_gid_all(gid)
+        results: list[dict[str, Any]] = []
+
+        for item in elements:
+            if str(item.get("type") or "").strip().lower() != "file":
+                continue
+            element_id = str(item.get("elementId") or "").strip()
+            parsed = self._parse_vm_json_element_id(element_id)
+            if not parsed:
+                continue
+
+            category = str(item.get("category") or "").strip().upper()
+            if category and category != "VM":
+                continue
+
+            refs = self._extract_dp_item_refs(item)
+            properties: dict[str, str] = {}
+            xml_checked = False
+            if not self._dp_vm_json_refs_match(refs, gid=gid, eid=eid, wpid=wpid):
+                item_aid = str(item.get("assetId") or "").strip()
+                item_eid = str(item.get("elementId") or "").strip()
+                if not item_aid or not item_eid:
+                    continue
+                try:
+                    xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
+                    xml_checked = True
+                except Exception as exc:
+                    logger.warning(
+                        "DP VM result XML lookup failed; skip unverified item: eid=%s err=%s",
+                        item_eid,
+                        exc,
+                    )
+                    continue
+                if not xml:
+                    continue
+                info = parse_dt_file_xml(xml) or {}
+                if str(info.get("category") or "").strip().upper() != "VM":
+                    continue
+                refs = info.get("refs") or {}
+                properties = self._properties_to_dict(info.get("properties") or [])
+                if not self._dp_vm_json_refs_match(refs, gid=gid, eid=eid, wpid=wpid):
+                    continue
+
+            if not properties:
+                item_aid = str(item.get("assetId") or "").strip()
+                item_eid = str(item.get("elementId") or "").strip()
+                if item_aid and item_eid and not xml_checked:
+                    try:
+                        xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
+                    except Exception:
+                        xml = None
+                    if xml:
+                        info = parse_dt_file_xml(xml) or {}
+                        properties = self._properties_to_dict(
+                            info.get("properties") or []
+                        )
+
+            seq_id, process_index = parsed
+            results.append(
+                {
+                    "seq_id": seq_id,
+                    "process_index": process_index,
+                    "element_id": element_id,
+                    "asset_id": item.get("assetId"),
+                    "path": item.get("path"),
+                    "display_name": item.get("displayName"),
+                    "create_date": item.get("createDate"),
+                    "refs": dict(refs),
+                    "properties": properties,
+                    "item": item,
+                }
+            )
+
+        return results
+
+    @staticmethod
+    def _group_existing_vm_results_by_seq(
+        results: list[dict[str, Any]],
+    ) -> dict[int, list[dict[str, Any]]]:
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for result in results:
+            seq_id = result.get("seq_id")
+            if isinstance(seq_id, int):
+                groups.setdefault(seq_id, []).append(result)
+        return groups
+
+    def _vm_result_matches_current_run(
+        self,
+        doc: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> bool:
+        props = result.get("properties") or {}
+        result_job_id = str(props.get("VM_JOB_ID") or "").strip()
+        current_job_id = str(doc.get("vm_job_id") or "").strip()
+        if result_job_id:
+            return bool(current_job_id and result_job_id == current_job_id)
+
+        started_ts = self._parse_iso_ts(doc.get("vm_started_at"))
+        result_ts = self._parse_dp_datetime(result.get("create_date"))
+        if started_ts and result_ts:
+            return result_ts >= started_ts - 300
+        return False
+
+    def _select_json_upload_seq(
+        self,
+        doc: Mapping[str, Any],
+        existing_results: list[dict[str, Any]],
+        *,
+        process_count: int,
+    ) -> int:
+        upload_info = doc.get("vm_result_upload") or {}
+        seq_id = upload_info.get("seq_id") if isinstance(upload_info, Mapping) else None
+        if isinstance(seq_id, int) and seq_id > 0:
+            return seq_id
+
+        groups = self._group_existing_vm_results_by_seq(existing_results)
+        current_groups: dict[int, list[dict[str, Any]]] = {}
+        for seq, items in groups.items():
+            matched = [item for item in items if self._vm_result_matches_current_run(doc, item)]
+            if matched:
+                current_groups[seq] = matched
+
+        incomplete = [
+            seq for seq, items in current_groups.items()
+            if len({item.get("process_index") for item in items}) < process_count
+        ]
+        if incomplete:
+            return max(incomplete)
+
+        complete = [
+            seq for seq, items in current_groups.items()
+            if len({item.get("process_index") for item in items}) >= process_count
+        ]
+        if complete:
+            return max(complete)
+
+        max_existing = max(groups.keys(), default=0)
+        return max_existing + 1 if max_existing > 0 else 1
+
+    async def _find_existing_dp_vm_result(
+        self,
+        *,
+        gid: str,
+        eid: str,
+        wpid: Optional[str],
+        element_id: str,
+    ) -> dict[str, Any] | None:
+        existing = await self._list_existing_dp_vm_results(gid=gid, eid=eid, wpid=wpid)
+        for result in existing:
+            if result.get("element_id") == element_id:
+                return result
+        return None
+
+    @staticmethod
+    def _dp_existing_result_is_usable(result: Mapping[str, Any] | None) -> bool:
+        return bool(result and str(result.get("path") or "").strip())
+
+    @staticmethod
+    def _mark_vm_json_upload_item(
+        upload_info: dict[str, Any],
+        item: Mapping[str, Any],
+    ) -> None:
+        process_index = item.get("process_index")
+        element_id = str(item.get("element_id") or "").strip()
+        if isinstance(process_index, int):
+            uploaded_indices = upload_info.setdefault("uploaded_indices", [])
+            if process_index not in uploaded_indices:
+                uploaded_indices.append(process_index)
+                uploaded_indices.sort()
+            upload_info["last_uploaded_index"] = process_index
+        if element_id:
+            uploaded_ids = upload_info.setdefault("uploaded_element_ids", [])
+            if element_id not in uploaded_ids:
+                uploaded_ids.append(element_id)
+            upload_info["last_uploaded_element_id"] = element_id
+        upload_info["failed_index"] = None
+        upload_info["error_message"] = None
+        upload_info["updated_at"] = datetime.now().isoformat()
 
     # ---------------- DB 초안 생성/조회/패치 ----------------
     async def create_from_iso(
@@ -2552,6 +2848,32 @@ class VmProjectService:
                         vm_project_id, doc, result_link
                     )
                     new_status = "completed"
+                except RetryableVmResultUploadError as upload_err:
+                    err_msg = f"VM JSON dt_file 업로드 재시도 대기: {upload_err}"
+                    logger.warning(
+                        "json dt_file upload retryable failure: project=%s err=%s",
+                        str(vm_project_id),
+                        upload_err,
+                    )
+                    latest_doc = await self.dao.get(vm_project_id)
+                    upload_info = dict(
+                        (latest_doc or {}).get("vm_result_upload")
+                        or self._empty_vm_result_upload(upload_mode)
+                    )
+                    upload_info["error_message"] = err_msg
+                    upload_info["updated_at"] = datetime.now().isoformat()
+                    await self.dao.set_vm_result_upload(
+                        vm_project_id,
+                        upload_info=upload_info,
+                        project_status="running",
+                        vm_raw_status=vm_state,
+                        vm_error_message=err_msg,
+                    )
+                    return {
+                        "vm_project_id": str(vm_project_id),
+                        "status": "running",
+                        "vm_state": vm_state,
+                    }
                 except Exception as upload_err:
                     err_msg = f"VM JSON dt_file 업로드 실패: {upload_err}"
                     logger.error(
@@ -2670,49 +2992,13 @@ class VmProjectService:
         max_seq = 0
 
         if source == "dp":
-            try:
-                result = await dp_client.list_elements_by_gid(gid)
-                candidates = [
-                    item for item in (result.get("content") or [])
-                    if (item.get("type") or "").lower() == "file"
-                ]
-            except Exception:
-                candidates = []
-
-            for item in candidates:
-                item_aid = item.get("assetId") or ""
-                item_eid = item.get("elementId") or ""
-                if not item_aid or not item_eid:
-                    continue
-                try:
-                    xml = await dp_client.get_element_xml(aid=item_aid, eid=item_eid)
-                except Exception:
-                    continue
-                if not xml:
-                    continue
-                info = parse_dt_file_xml(xml) or {}
-                if str(info.get("category") or "").strip().upper() != "VM":
-                    continue
-                # DP: DT_GLOBAL_ASSET + DT_PROJECT + WORKPLAN으로 매칭 (DT_ASSET 스킵)
-                refs = info.get("refs") or {}
-                if (refs.get("DT_GLOBAL_ASSET") or "") != gid:
-                    continue
-                if (refs.get("DT_PROJECT") or "") != eid:
-                    continue
-                if wpid and (refs.get("WORKPLAN") or "") != wpid:
-                    continue
-                for p in (info.get("properties") or []):
-                    if not isinstance(p, dict):
-                        continue
-                    if str(p.get("key") or "").strip() != "SEQ_ID":
-                        continue
-                    try:
-                        v = int(str(p.get("value") or "").strip())
-                    except ValueError:
-                        v = None
-                    if v is not None and v > max_seq:
-                        max_seq = v
-                    break
+            results = await self._list_existing_dp_vm_results(
+                gid=gid, eid=eid, wpid=wpid
+            )
+            for item in results:
+                v = item.get("seq_id")
+                if isinstance(v, int) and v > max_seq:
+                    max_seq = v
         else:
             pairs = await self._list_dtfile_pairs(gid=gid)
             for aid_try, eid_try in pairs:
@@ -2970,13 +3256,27 @@ class VmProjectService:
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
 
-            seq_id = await self._compute_next_vm_seq_id(
-                gid=gid,
-                aid=aid,
-                eid=eid,
-                wpid=wpid,
-                source=source,
-            )
+            process_count = len(project_file.get("process") or [])
+            existing_dp_results: list[dict[str, Any]] = []
+            if source == "dp":
+                existing_dp_results = await self._list_existing_dp_vm_results(
+                    gid=gid,
+                    eid=eid,
+                    wpid=wpid,
+                )
+                seq_id = self._select_json_upload_seq(
+                    vm_project_doc,
+                    existing_dp_results,
+                    process_count=process_count,
+                )
+            else:
+                seq_id = await self._compute_next_vm_seq_id(
+                    gid=gid,
+                    aid=aid,
+                    eid=eid,
+                    wpid=wpid,
+                    source=source,
+                )
             upload_items = self._collect_vm_json_upload_items(
                 extract_root=extract_root,
                 project_file=project_file,
@@ -2990,7 +3290,28 @@ class VmProjectService:
             upload_info["updated_at"] = datetime.now().isoformat()
             await self.dao.set_vm_result_upload(vm_project_id, upload_info=upload_info)
 
+            existing_by_element_id = {
+                str(result.get("element_id") or ""): result
+                for result in existing_dp_results
+                if result.get("seq_id") == seq_id
+            }
+
             for item in upload_items:
+                existing_result = existing_by_element_id.get(item["element_id"])
+                if source == "dp" and self._dp_existing_result_is_usable(existing_result):
+                    logger.info(
+                        "DP VM json result already exists; skip upload: project=%s element_id=%s path=%s",
+                        str(vm_project_id),
+                        item["element_id"],
+                        existing_result.get("path"),
+                    )
+                    self._mark_vm_json_upload_item(upload_info, item)
+                    await self.dao.set_vm_result_upload(
+                        vm_project_id,
+                        upload_info=upload_info,
+                    )
+                    continue
+
                 xml_str = make_vm_dt_file_xml(
                     asset_global_id=gid,
                     vm_asset_id=item["element_id"],
@@ -3006,6 +3327,7 @@ class VmProjectService:
                     workingstep_id=item["workingstep_id"],
                     process_index=item["process_index"],
                     seq_id=seq_id,
+                    vm_job_id=vm_project_doc.get("vm_job_id"),
                 )
 
                 try:
@@ -3027,6 +3349,30 @@ class VmProjectService:
                             upload_content_type="application/json",
                         )
                 except Exception as exc:
+                    if source == "dp":
+                        try:
+                            existing_after_error = await self._find_existing_dp_vm_result(
+                                gid=gid,
+                                eid=eid,
+                                wpid=wpid,
+                                element_id=item["element_id"],
+                            )
+                        except RetryableVmResultUploadError:
+                            raise
+                        if self._dp_existing_result_is_usable(existing_after_error):
+                            logger.warning(
+                                "DP VM json upload errored but result exists; reconcile as uploaded: project=%s element_id=%s err=%s",
+                                str(vm_project_id),
+                                item["element_id"],
+                                exc,
+                            )
+                            self._mark_vm_json_upload_item(upload_info, item)
+                            await self.dao.set_vm_result_upload(
+                                vm_project_id,
+                                upload_info=upload_info,
+                            )
+                            continue
+
                     upload_info["failed_index"] = item["process_index"]
                     upload_info["error_message"] = (
                         f"process {item['process_index']} ({item['element_id']}) 업로드 실패: {exc}"
@@ -3041,11 +3387,7 @@ class VmProjectService:
                     )
                     raise HTTPException(status_code=502, detail=upload_info["error_message"])
 
-                upload_info["uploaded_indices"].append(item["process_index"])
-                upload_info["uploaded_element_ids"].append(item["element_id"])
-                upload_info["last_uploaded_index"] = item["process_index"]
-                upload_info["last_uploaded_element_id"] = item["element_id"]
-                upload_info["updated_at"] = datetime.now().isoformat()
+                self._mark_vm_json_upload_item(upload_info, item)
                 await self.dao.set_vm_result_upload(
                     vm_project_id,
                     upload_info=upload_info,

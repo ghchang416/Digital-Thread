@@ -253,6 +253,7 @@ class VmProjectDAO:
                 "$set": {
                     "status": "running",
                     "vm_job_id": vm_job_id,
+                    "vm_started_at": _now_iso(),
                     "vm_last_polled_at": _now_iso(),
                     "vm_error_message": None,
                     "vm_raw_status": vm_state,

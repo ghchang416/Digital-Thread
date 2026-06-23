@@ -24,6 +24,92 @@ VM Middle은 ISO 14649 기반의 디지털 스레드 플랫폼에서 가상가�
 
 ---
 
+## 2026-06-23 — VM 결과 업로드 정합성 보강 및 프론트 상태 자동 갱신
+
+### 개발 배경
+- `data_45c Project`에서 VM job은 `COMPLETE`가 되었고 DP 플랫폼에는 `vm_json_001_001`부터 `vm_json_001_012`까지 12개 결과 JSON 파일이 실제 생성되었지만, VM Middle의 MongoDB 상태는 `failed`로 남는 문제가 확인되었다.
+- 원인은 외부 플랫폼(DP) 업로드 성공 여부와 내부 MongoDB 상태 저장이 하나의 트랜잭션으로 묶여 있지 않아, MongoDB 장애 또는 재시도 과정에서 partial success 상태가 발생할 수 있기 때문이다.
+- 이후 poll/retry 시 이미 DP에 존재하는 VM 결과를 성공 상태로 reconcile하지 못하면, 중복 업로드 시도와 DP `400` 응답이 발생하고 프로젝트가 실패로 남을 수 있다.
+- 프론트에서는 TanStack Query의 `staleTime`만 설정되어 있어, 사용자가 오래 기다려도 `running` 상태 변화가 자동으로 화면에 반영되지 않는 문제가 있었다.
+
+### 보고서용 핵심 요약
+| 구분 | 기존 문제 | 개선 내용 | 기대 효과 |
+| --- | --- | --- | --- |
+| DP 업로드 정합성 | DP에는 결과가 있으나 MongoDB는 failed | 기존 DP VM JSON 결과 조회 및 reconcile 로직 추가 | 중복 업로드 방지, 완료 상태 복구 가능 |
+| 재시도 안정성 | DP 조회 실패를 결과 없음으로 오인할 위험 | 조회 실패를 retryable 상태로 분리 | 장애 중 중복 결과 생성 방지 |
+| 실행 단위 식별 | partial upload와 신규 실행 seq 구분이 불명확 | `vm_started_at`, `VM_JOB_ID` property 지원 | 같은 run 재개와 신규 run 구분 가능 |
+| 운영 복구 | 이미 failed가 된 프로젝트는 자동 poll 대상이 아님 | dry-run 기본 복구 스크립트 추가 | 운영자가 DP 결과 기준으로 completed 복구 가능 |
+| 프론트 갱신 | 사용자가 기다려도 화면 상태가 자동 변경되지 않음 | `running` 상태에서만 5초 interval refetch | 불필요한 요청 없이 상태 변화 표시 |
+
+### 적용 범위
+- 백엔드
+  - `src/clients/dp.py`
+  - `src/dao/vm_project.py`
+  - `src/services/vm_project.py`
+  - `src/utils/xml_parser.py`
+  - `scripts/reconcile_vm_result_upload.py`
+- 프론트엔드
+  - `frontend/src/app/app.tsx`
+- 계획 문서
+  - `docs/vm_result_upload_reconcile_plan.md`
+  - 현재 `docs/`는 `.gitignore` 대상이므로, Git 반영이 필요하면 ignore 정책 조정이 필요하다.
+
+### 구현 방식
+- DP client의 `upload_xml()`과 `upload_xml_with_file()`에서 HTTP 오류 발생 시 status, URL, response body 일부, 파일명, content type이 예외 메시지에 포함되도록 개선했다.
+- VM job 시작 시 DAO가 `vm_started_at`을 저장하도록 하여, 이후 기존 DP 결과가 현재 VM run의 결과인지 판단할 수 있는 기준을 추가했다.
+- VM 결과 XML 생성 함수에 선택적으로 `VM_JOB_ID` property를 넣을 수 있게 확장했다.
+- `VmProjectService`에 DP 기존 VM JSON 결과 조회 유틸을 추가했다.
+  - DP `list_elements_by_gid()` 결과의 `reflist`, `category`, `elementId`, `path`, `displayName`을 우선 사용한다.
+  - DP 목록 조회는 pagination을 고려해 반복 조회한다.
+  - `vm_json_###_###` 패턴에서 `seq_id`와 process index를 추출한다.
+  - 필요한 경우에만 `get_element_xml()`을 보조 조회로 사용한다.
+- JSON 업로드 모드에서 사용할 seq 선택 로직을 보강했다.
+  - 기존 `vm_result_upload.seq_id`가 있으면 해당 seq를 우선 재사용한다.
+  - 같은 VM run의 partial 결과가 있으면 같은 seq를 이어서 사용한다.
+  - 기존 complete 결과가 있고 신규 run이면 다음 seq를 사용한다.
+  - DP 기존 결과 조회 실패는 결과 없음이 아니라 retryable 오류로 처리한다.
+- `_create_and_upload_vm_json_dt_files()`에서 이미 DP에 존재하고 `path`가 있는 `vm_json_*` 결과는 업로드하지 않고 성공 처리한다.
+- DP 업로드 중 오류가 발생해도 같은 `elementId`가 실제로 생성되어 있으면 reconcile 성공으로 처리한다.
+- retryable 오류는 프로젝트를 즉시 `failed`로 바꾸지 않고 `running` 유지 상태로 다음 poll에서 재시도할 수 있게 했다.
+- 이미 `failed`로 남은 프로젝트 복구를 위해 `scripts/reconcile_vm_result_upload.py`를 추가했다.
+  - 기본은 dry-run이다.
+  - `--apply`를 명시해야 MongoDB 상태를 변경한다.
+  - DP에 process 결과가 모두 존재할 때만 `completed`로 복구한다.
+- React `App`의 VM 프로젝트 목록/상세 query에 조건부 `refetchInterval`을 추가했다.
+  - 목록 안에 `running` 프로젝트가 있으면 5초마다 목록을 다시 조회한다.
+  - 선택된 상세 프로젝트가 `running`이면 5초마다 상세를 다시 조회한다.
+  - `running`이 없으면 자동 refetch를 중지한다.
+
+### 호환성/주의사항
+- VM 서버 job 생성 payload와 기존 VM 실행 API 계약은 변경하지 않았다.
+- 프로젝트 status enum은 기존 `needs-fix`, `ready`, `running`, `completed`, `failed`를 유지했다. `partial`은 프로젝트 status로 추가하지 않고 내부 업로드 진행 상태로만 다룬다.
+- `process-annotations`, `stocks`, `toolpath-preview`는 자동 refetch 대상에서 제외해 불필요한 요청을 줄였다.
+- `data_45c Project`는 dry-run으로 복구 가능 여부만 확인했으며, 실제 DB 상태를 `completed`로 바꾸는 `--apply`는 실행하지 않았다.
+- `docs/vm_result_upload_reconcile_plan.md`는 현재 ignore 대상이므로, 계획 문서를 Git에 포함하려면 `.gitignore` 정책을 별도로 조정해야 한다.
+
+### 검증 내역
+- 백엔드 문법 검증:
+  - `docker exec vm_middle /opt/conda/envs/myenv/bin/python -m py_compile src/clients/dp.py src/dao/vm_project.py src/utils/xml_parser.py src/services/vm_project.py scripts/reconcile_vm_result_upload.py`
+- `data_45c Project` 복구 dry-run:
+  - 명령: `docker exec vm_middle /opt/conda/envs/myenv/bin/python scripts/reconcile_vm_result_upload.py --project-id 6a3a1bd101933ad23df9e84a`
+  - 결과: `seq_id=1`, `process_count=12`, `uploaded_indices=1~12`, `missing_indices=[]`, `can_complete=true`, `applied=false`
+- 기존 DP 결과 기준 신규 seq 계산 확인:
+  - 결과: 다음 신규 seq는 `2`
+- 프론트 검증:
+  - `docker exec vm_middle_front npm run typecheck` 통과
+  - `docker exec vm_middle_front npm run build` 통과
+- 컨테이너 로그 확인:
+  - `vm_middle`은 WatchFiles로 변경된 Python 파일을 감지해 재로딩되었다.
+  - MongoDB 기준 현재 `running` 프로젝트는 없으므로 백그라운드 poll 대상은 없는 상태다.
+
+### 남은 작업
+- 운영 판단 후 `data_45c Project`에 대해 복구 스크립트 `--apply`를 실행할지 결정한다.
+- DP/ISO reconcile 유틸에 대한 단위 테스트를 추가한다.
+- 실제 신규 VM 실행에서 JSON 업로드 중 MongoDB 장애를 재현해, 다음 poll에서 중복 업로드 없이 reconcile되는지 통합 테스트한다.
+- 프론트에서 업로드 진행률(`uploaded_indices / total_count`)과 retryable 상태 메시지를 더 명확히 표시하는 개선을 검토한다.
+
+---
+
 ## 2026-05-08 — NC Toolpath + Stock 3D Alignment 구현
 
 ### 개발 배경

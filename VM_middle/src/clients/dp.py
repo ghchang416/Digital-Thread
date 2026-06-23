@@ -16,6 +16,33 @@ def _base() -> str:
     return str(settings.DP_API_URL).rstrip("/")
 
 
+def _raise_for_status_with_detail(
+    response: httpx.Response,
+    *,
+    context: str,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = (response.text or "").strip()
+        if len(body) > 1000:
+            body = body[:1000] + "...(truncated)"
+        meta_text = ""
+        if meta:
+            pairs = [f"{k}={v}" for k, v in meta.items() if v is not None]
+            meta_text = f" meta=({', '.join(pairs)})" if pairs else ""
+        message = (
+            f"{context}: status={response.status_code} "
+            f"url='{response.url}'{meta_text} body='{body}'"
+        )
+        raise httpx.HTTPStatusError(
+            message,
+            request=exc.request,
+            response=exc.response,
+        ) from exc
+
+
 async def list_projects(
     *,
     page: int = 0,
@@ -97,7 +124,7 @@ async def upload_xml(xml_str: str) -> Any:
             params={"validation": "false"},
             content=xml_str.encode("utf-8"),
         )
-        r.raise_for_status()
+        _raise_for_status_with_detail(r, context="DP xml upload failed")
         try:
             return r.json()
         except Exception:
@@ -136,7 +163,11 @@ async def upload_xml_with_file(
                 headers=_dp_headers(),
                 data=data,
             )
-        r.raise_for_status()
+        _raise_for_status_with_detail(
+            r,
+            context="DP xml-with-file upload failed",
+            meta={"file_name": file_name, "content_type": content_type},
+        )
         try:
             return r.json()
         except Exception:

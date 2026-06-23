@@ -21,3 +21,5 @@ Operation_Manager/front_app/next-env.d.ts
 tmp/
 
 .DS_Store
+
+docs/
