@@ -1,0 +1,19 @@
+# Optional isolated creator API, with no Mongo startup or host API port.
+services:
+  iso-creator-front:
+    environment:
+      ISO_API_UPSTREAM: iso-creator-preview:8000
+  iso-creator-preview:
+    profiles: [creator]
+    image: digital-thread-iso-api
+    working_dir: /app
+    command: /opt/conda/envs/myenv/bin/python -m uvicorn src.creator_app:app --host 0.0.0.0 --port 8000
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./ISO_api:/app:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - kitech_network

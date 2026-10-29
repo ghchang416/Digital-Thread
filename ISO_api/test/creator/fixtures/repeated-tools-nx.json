@@ -1,0 +1,7 @@
+{
+  "values": [
+    {"Object Information": {"Object name": "ROUGH_T1"}, "Tool Information": {"(D) Diameter": "10"}, "Feed Rate": {"Cut": "500"}},
+    {"Object Information": {"Object name": "FINISH_T2"}, "Tool Information": {"(D) Diameter": "6"}, "Feed Rate": {"Cut": "300"}},
+    {"Object Information": {"Object name": "REST_T1"}, "Tool Information": {"(D) Diameter": "10"}, "Feed Rate": {"Cut": "500"}}
+  ]
+}

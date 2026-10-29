@@ -1,0 +1,29 @@
+{
+  "name": "dt-project-creator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 8080 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.100.9",
+    "fflate": "0.8.3",
+    "lucide-react": "0.468.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react": "4.7.0",
+    "fake-indexeddb": "6.2.4",
+    "tsx": "4.20.5",
+    "typescript": "5.9.3",
+    "vite": "6.4.2"
+  }
+}

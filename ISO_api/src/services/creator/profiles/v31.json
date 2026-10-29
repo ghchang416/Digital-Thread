@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "v31",
+  "assetType": "DtAsset",
+  "namespace": "http://digital-thread.re/dt_asset",
+  "assetTypes": {"project": "DtProject", "machine": "DtMachineTool", "material": "DtMaterial", "file": "DtFile", "tool": "DtCuttingTool13399"},
+  "referenceType": "DtReference",
+  "keyValueType": "DtKeyValue",
+  "referencePolicies": [
+    {"id": "workpiece-material", "sourceType": "Workpiece", "fieldName": "ref_dt_material", "label": "재료 참조", "targetRole": "material", "targetType": "DtMaterial", "editor": "asset-picker", "key": "DT_ELEMENT_FULLPATH", "valueFormat": "element-fullpath", "elementIdPrefix": "material", "displayName": "Material Ref"},
+    {"id": "workplan-machine", "sourceType": "Workplan", "fieldName": "ref_dt_machine_tool", "label": "머신 툴 참조", "targetRole": "machine", "targetType": "DtMachineTool", "editor": "asset-picker", "key": "DT_ELEMENT_FULLPATH", "valueFormat": "element-fullpath", "elementIdPrefix": "machine-tool", "displayName": "Machine Tool Ref"},
+    {"id": "operation-tool", "sourceType": "Operation", "fieldName": "ref_dt_cutting_tool", "label": "절삭 공구 참조", "targetRole": "tool", "targetType": "DtCuttingTool13399", "editor": "nc-tools", "key": "DT_ELEMENT_FULLPATH", "valueFormat": "element-fullpath", "elementIdPrefix": "cutting-tool", "displayName": "Cutting Tool Ref"}
+  ]
+}

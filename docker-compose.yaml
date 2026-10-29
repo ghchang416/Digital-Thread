@@ -33,6 +33,19 @@ services:
     networks:
       - kitech_network
 
+  iso-creator-front:
+    profiles: [creator]
+    build:
+      context: ./ISO_api/frontend
+      target: production
+    ports:
+      - "127.0.0.1:${CREATOR_FRONT_PORT:-3011}:8080"
+    environment:
+      ISO_API_UPSTREAM: iso-api:8000
+    networks:
+      - kitech_network
+    restart: unless-stopped
+
   om:
     build:
       context: ./Operation_Manager
@@ -94,6 +107,7 @@ services:
 volumes:
   mongo_data:
   vm_middle_front_node_modules:
+  iso_creator_front_node_modules:
 
 networks:
   kitech_network:

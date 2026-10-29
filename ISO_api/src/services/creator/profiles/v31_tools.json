@@ -1,0 +1,28 @@
+{
+  "version": "manual-tools-1",
+  "toolTypes": [
+    {"typeId": "MillingCuttingTool", "label": "밀링 공구"},
+    {"typeId": "Endmill", "label": "엔드밀"},
+    {"typeId": "Facemill", "label": "페이스밀"},
+    {"typeId": "TwistDrill", "label": "트위스트 드릴"},
+    {"typeId": "Spotdrill", "label": "스폿 드릴"}
+  ],
+  "operationTypes": [
+    {"typeId": "FreeformOperation", "label": "자유곡면 가공"},
+    {"typeId": "PlaneRoughMilling", "label": "평면 황삭"},
+    {"typeId": "PlaneFinishMilling", "label": "평면 정삭"},
+    {"typeId": "BottomAndSideRoughMilling", "label": "바닥·측면 황삭"},
+    {"typeId": "BottomAndSideFinishMilling", "label": "바닥·측면 정삭"},
+    {"typeId": "Drilling", "label": "드릴링"},
+    {"typeId": "CenterDrilling", "label": "센터 드릴링"}
+  ],
+  "properties": [
+    {"name": "effective_cutting_diameter", "field": "effective_cutting_diameter", "label": "유효 절삭 지름", "unit": "mm", "min": 0, "integer": false},
+    {"name": "corner_radius", "field": "edge_radius", "label": "날끝 반경", "unit": "mm", "min": 0, "integer": false},
+    {"name": "functional_length", "field": "its_cutting_edges.tool_functional_length", "label": "공구 기능 길이", "unit": "mm", "min": 0, "integer": false},
+    {"name": "assembly_length", "field": "overall_assembly_length", "label": "전체 조립 길이", "unit": "mm", "min": 0, "integer": false},
+    {"name": "number_of_teeth", "field": "number_of_effective_teeth", "label": "유효 날 수", "unit": "1", "min": 1, "integer": true},
+    {"name": "maximum_depth_of_cut", "field": "maximum_depth_of_cut", "label": "최대 절삭 깊이", "unit": "mm", "min": 0, "integer": false},
+    {"name": "point_angle", "field": "point_angle", "label": "드릴 선단각", "unit": "deg", "min": 0, "integer": false}
+  ]
+}

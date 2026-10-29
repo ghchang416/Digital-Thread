@@ -1,0 +1,15 @@
+services:
+  iso-creator-front:
+    build:
+      target: development
+    volumes:
+      - ./ISO_api/frontend:/app
+      - iso_creator_front_node_modules:/app/node_modules
+    environment:
+      ISO_API_PROXY_TARGET: http://iso-api:8000
+    command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run dev"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s

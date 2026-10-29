@@ -14,12 +14,15 @@ from src.apis.v2.asset_download_file import router as asset_download_file_router
 # v3 라우터
 from src.apis.v3.asset import router as asset_router
 from src.apis.v3.project import router as v3_project_router
+from src.apis.v3.creator import router as creator_router
+from src.apis.v3.creator_middleware import BodyLimitMiddleware
 
 # v3 중복 검사를 위한 인덱스 생성
 from src.database import get_db, ensure_asset_indexes
 
 from src.utils.exceptions import CustomException
 from fastapi_mcp import FastApiMCP
+from src.utils.optional_mcp import mount_optional_mcp
 import logging
 
 
@@ -29,6 +32,7 @@ logging.getLogger("python_multipart").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = FastAPI()
+app.add_middleware(BodyLimitMiddleware)
 
 
 def _fix_file_upload_schemas(schema: dict) -> None:
@@ -110,13 +114,9 @@ app.include_router(asset_upload_file_router)
 app.include_router(asset_download_file_router)
 app.include_router(asset_router)
 app.include_router(v3_project_router)
+app.include_router(creator_router)
 
-mcp = FastApiMCP(
-    app,
-    name="My API MCP",
-    description="MCP server for my API",
-)
-mcp.mount()
+mcp = mount_optional_mcp(app, FastApiMCP)
 
 if __name__ == "__main__":
     import uvicorn
