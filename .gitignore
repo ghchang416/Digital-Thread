@@ -23,3 +23,13 @@ tmp/
 .DS_Store
 
 docs/
+
+# Local document builds, demo exports, and verification artifacts
+/.codex-artifacts/
+/outputs/
+
+# Local planning documents and standalone UI mockups (not runtime sources)
+/plans/
+
+# Nested Git worktree; manage its source through its own Git checkout
+/Operation_Manager/OM_backend/
