@@ -1,0 +1,1481 @@
+{
+  "source": "docs/hanhwa_db자료/ELS_테이블구조_230131.xlsx",
+  "tables": {
+    "Part_Info": {
+      "sheet": "제품 기본 정보",
+      "start_column": 1,
+      "columns": [
+        {
+          "name": "Part_No",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "Part_Rev",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 4
+        },
+        {
+          "name": "Part_Name",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "Project",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "고객사",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "Part_Size_OD/W",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "Part_Size_ID/L",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "Part_Size_H",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "Part_Material",
+          "type": "Text",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "Part_MaterialType",
+          "type": "Text",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "Spec_재질",
+          "type": "Text",
+          "key": null,
+          "source_row": 13
+        },
+        {
+          "name": "Make/Buy",
+          "type": "Text",
+          "key": null,
+          "source_row": 14
+        },
+        {
+          "name": "자재비",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 15
+        },
+        {
+          "name": "Part_SerialNo",
+          "type": "Text",
+          "key": null,
+          "source_row": 16
+        },
+        {
+          "name": "자재공급업체",
+          "type": "Text",
+          "key": null,
+          "source_row": 17
+        },
+        {
+          "name": "판가",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 18
+        },
+        {
+          "name": "부품군",
+          "type": "Text",
+          "key": null,
+          "source_row": 19
+        },
+        {
+          "name": "엔진Section",
+          "type": "Text",
+          "key": null,
+          "source_row": 20
+        },
+        {
+          "name": "개발담당자",
+          "type": "Text",
+          "key": null,
+          "source_row": 21
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 22
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 23
+        }
+      ]
+    },
+    "Operation_Info": {
+      "sheet": "기본 공정 정보",
+      "start_column": 1,
+      "columns": [
+        {
+          "name": "Part_No",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "Part_Rev",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 4
+        },
+        {
+          "name": "Op_No",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 5
+        },
+        {
+          "name": "생산Site",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "공정명",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "공정 Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "공정 Description",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "설비코드",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "설비번호",
+          "type": "Text",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "생산직",
+          "type": "Text",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "Setup Hour",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 13
+        },
+        {
+          "name": "Run Hour",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 14
+        },
+        {
+          "name": "Machine Hour",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 15
+        },
+        {
+          "name": "공구비",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 16
+        },
+        {
+          "name": "자재비",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 17
+        },
+        {
+          "name": "외주비 - 기타",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 18
+        },
+        {
+          "name": "외주 업체",
+          "type": "Text",
+          "key": null,
+          "source_row": 19
+        },
+        {
+          "name": "외주 계약 No#",
+          "type": "Text",
+          "key": null,
+          "source_row": 20
+        },
+        {
+          "name": "공정 시작 목표 일정",
+          "type": "Date",
+          "key": null,
+          "source_row": 21
+        },
+        {
+          "name": "목표 공수",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 22
+        },
+        {
+          "name": "목표 공구비",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 23
+        },
+        {
+          "name": "승인 여부",
+          "type": "Text",
+          "key": null,
+          "source_row": 24
+        },
+        {
+          "name": "PGM No",
+          "type": "Text",
+          "key": null,
+          "source_row": 25
+        },
+        {
+          "name": "PGM Time",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 26
+        },
+        {
+          "name": "AT / ST",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 27
+        },
+        {
+          "name": "AT Man Hour",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 28
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 29
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 30
+        }
+      ]
+    },
+    "Operation_Machining": {
+      "sheet": "상세 공정 정보",
+      "start_column": 8,
+      "columns": [
+        {
+          "name": "Operation_Machining_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "Part_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "Part_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "Op_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "공정명",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "공정 Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "PGMNO",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "REVNO",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "SEQNO",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "DESC",
+          "type": "Text",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "CYCLETIME",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 13
+        },
+        {
+          "name": "TOOLNO",
+          "type": "Text",
+          "key": null,
+          "source_row": 14
+        },
+        {
+          "name": "TYPE_OFFSETNO",
+          "type": "Text",
+          "key": null,
+          "source_row": 15
+        },
+        {
+          "name": "INSERT_01",
+          "type": "Text",
+          "key": null,
+          "source_row": 16
+        },
+        {
+          "name": "INSERT_02",
+          "type": "Text",
+          "key": null,
+          "source_row": 17
+        },
+        {
+          "name": "HOLDER_01",
+          "type": "Text",
+          "key": null,
+          "source_row": 18
+        },
+        {
+          "name": "HOLDER_02",
+          "type": "Text",
+          "key": null,
+          "source_row": 19
+        },
+        {
+          "name": "HOLDER_03",
+          "type": "Text",
+          "key": null,
+          "source_row": 20
+        },
+        {
+          "name": "HOLDER_04",
+          "type": "Text",
+          "key": null,
+          "source_row": 21
+        },
+        {
+          "name": "HOLDER_05",
+          "type": "Text",
+          "key": null,
+          "source_row": 22
+        },
+        {
+          "name": "SLIMCHUCK",
+          "type": "Text",
+          "key": null,
+          "source_row": 23
+        },
+        {
+          "name": "SPINDLE_01",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 24
+        },
+        {
+          "name": "SPINDLE_02",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 25
+        },
+        {
+          "name": "FEED_01",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 26
+        },
+        {
+          "name": "FEED_02",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 27
+        },
+        {
+          "name": "FEED_03",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 28
+        },
+        {
+          "name": "FEED_04",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 29
+        },
+        {
+          "name": "RECYCLE",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 30
+        },
+        {
+          "name": "CORNER_NOSE_RADIUS",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 31
+        },
+        {
+          "name": "DIAMETER_SETPOINT",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 32
+        },
+        {
+          "name": "FLUTE_LENGTH_SETPOSITION",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 33
+        },
+        {
+          "name": "STICKOUT",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 34
+        },
+        {
+          "name": "EXTSTICKOUT_W",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 35
+        },
+        {
+          "name": "SETDIAMETER_OFFSET",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 36
+        },
+        {
+          "name": "STOCK_NUMBER",
+          "type": "Text",
+          "key": null,
+          "source_row": 37
+        },
+        {
+          "name": "DISTANCE_REAL",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 38
+        },
+        {
+          "name": "DISTANCE",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 39
+        },
+        {
+          "name": "DISTANCE_RATE",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 40
+        },
+        {
+          "name": "AXIAL_DEPTH_AVG",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 41
+        },
+        {
+          "name": "AXIAL_DEPTH_MAX",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 42
+        },
+        {
+          "name": "AXIAL_DEPTH_MIN",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 43
+        },
+        {
+          "name": "AXIAL_DEPTH",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 44
+        },
+        {
+          "name": "RADIAL_WIDTH_MAX",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 45
+        },
+        {
+          "name": "RADIAL_WIDTH_MIN",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 46
+        },
+        {
+          "name": "RADIAL_WIDTH",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 47
+        },
+        {
+          "name": "SPINDLE_MAX",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 48
+        },
+        {
+          "name": "SPINDLE_MIN",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 49
+        },
+        {
+          "name": "FEEDRATE_MAX",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 50
+        },
+        {
+          "name": "FEEDRATE_MIN",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 51
+        },
+        {
+          "name": "MRR",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 52
+        },
+        {
+          "name": "VOLUME_REMOVED",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 53
+        },
+        {
+          "name": "VERICUT_FLUTE_LENGTH",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 54
+        },
+        {
+          "name": "VERICUT_STICKOUT",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 55
+        },
+        {
+          "name": "VERICUT_DIAMETER",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 56
+        },
+        {
+          "name": "VERICUT_RADIUS",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 57
+        },
+        {
+          "name": "SHANK_DIAMETER",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 58
+        },
+        {
+          "name": "CUTTER_COMPENSATION",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 59
+        },
+        {
+          "name": "INSERT_ANGLE",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 60
+        },
+        {
+          "name": "CLEARANCE_ANGLE",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 61
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 62
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 63
+        }
+      ]
+    },
+    "Tool_Milling": {
+      "sheet": "공구기준정보",
+      "start_column": 8,
+      "columns": [
+        {
+          "name": "공구번호",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "공구사양",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 4
+        },
+        {
+          "name": "공구 TYPE",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "Maker",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "자산구분",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "날경 (mm)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "날수 (ea)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "코너R",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "생크다이어",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "날장",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "전장",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 13
+        },
+        {
+          "name": "단가 (천원)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 14
+        },
+        {
+          "name": "재연마 횟수",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 15
+        },
+        {
+          "name": "재연마비 (천원)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 16
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 17
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 18
+        }
+      ]
+    },
+    "Machine_Milling": {
+      "sheet": "설비기준정보",
+      "start_column": 8,
+      "columns": [
+        {
+          "name": "설비코드",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "설비번호",
+          "type": "Text",
+          "key": "Yes",
+          "source_row": 4
+        },
+        {
+          "name": "생산부서",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "SITE",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "위치",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "설비명 (모델)",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "컨트롤러",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "설비사이즈 W",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "설비사이즈 L",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "설비사이즈 H",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "설비무게",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 13
+        },
+        {
+          "name": "메이커",
+          "type": "Text",
+          "key": null,
+          "source_row": 14
+        },
+        {
+          "name": "도입 일자",
+          "type": "Date",
+          "key": null,
+          "source_row": 15
+        },
+        {
+          "name": "스트로크 X Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 16
+        },
+        {
+          "name": "스트로크 X Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 17
+        },
+        {
+          "name": "스트로크 Y Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 18
+        },
+        {
+          "name": "스트로크 Y Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 19
+        },
+        {
+          "name": "스트로크 Z Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 20
+        },
+        {
+          "name": "스트로크 Z Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 21
+        },
+        {
+          "name": "스트로크 A Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 22
+        },
+        {
+          "name": "스트로크 A Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 23
+        },
+        {
+          "name": "스트로크 B Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 24
+        },
+        {
+          "name": "스트로크 B Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 25
+        },
+        {
+          "name": "스트로크 C Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 26
+        },
+        {
+          "name": "스트로크 C Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 27
+        },
+        {
+          "name": "최대회전수",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 28
+        },
+        {
+          "name": "가용 DIA Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 29
+        },
+        {
+          "name": "가용 DIA Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 30
+        },
+        {
+          "name": "가용 HEIGHT Min",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 31
+        },
+        {
+          "name": "가용 HEIGHT Max",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 32
+        },
+        {
+          "name": "가용무게 MAX",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 33
+        },
+        {
+          "name": "허용 하중 (틸팅)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 34
+        },
+        {
+          "name": "허용 모멘트 (틸팅)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 35
+        },
+        {
+          "name": "MAX 절삭유 압력",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 36
+        },
+        {
+          "name": "TOOL POT 수",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 37
+        },
+        {
+          "name": "틸팅방식",
+          "type": "Text",
+          "key": null,
+          "source_row": 38
+        },
+        {
+          "name": "축수",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 39
+        },
+        {
+          "name": "앵글헤드",
+          "type": "Text",
+          "key": null,
+          "source_row": 40
+        },
+        {
+          "name": "BASIC 홀더 타입",
+          "type": "Text",
+          "key": null,
+          "source_row": 41
+        },
+        {
+          "name": "홀메이킹 적용 가능",
+          "type": "Text",
+          "key": null,
+          "source_row": 42
+        },
+        {
+          "name": "파워모니터링 유무",
+          "type": "Text",
+          "key": null,
+          "source_row": 43
+        },
+        {
+          "name": "최대 Torque",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 44
+        },
+        {
+          "name": "공구 측정장치",
+          "type": "Text",
+          "key": null,
+          "source_row": 45
+        },
+        {
+          "name": "Work Probe_I type",
+          "type": "Text",
+          "key": null,
+          "source_row": 46
+        },
+        {
+          "name": "Work Probe_L Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 47
+        },
+        {
+          "name": "Work Probe_T Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 48
+        },
+        {
+          "name": "급속이송 피드",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 49
+        },
+        {
+          "name": "기어 변속 구간(RPM)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 50
+        },
+        {
+          "name": "NC Code",
+          "type": "Text",
+          "key": null,
+          "source_row": 51
+        },
+        {
+          "name": "공구 MAX 길이",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 52
+        },
+        {
+          "name": "공구 MAX DIA",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 53
+        },
+        {
+          "name": "공구 MAX 무게",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 54
+        },
+        {
+          "name": "스핀들 베어링 재질",
+          "type": "Text",
+          "key": null,
+          "source_row": 55
+        },
+        {
+          "name": "앵글헤드 홀더 사양",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 56
+        },
+        {
+          "name": "최소 절삭유 압력",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 57
+        },
+        {
+          "name": "테이블 Size W",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 58
+        },
+        {
+          "name": "테이블 Size D",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 59
+        },
+        {
+          "name": "APC 도어 사이즈 (폭)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 60
+        },
+        {
+          "name": "APC 도어 사이즈 (높이)",
+          "type": "Numeric",
+          "key": null,
+          "source_row": 61
+        },
+        {
+          "name": "승인장비 여부",
+          "type": "Text",
+          "key": null,
+          "source_row": 62
+        },
+        {
+          "name": "절삭유 종류",
+          "type": "Text",
+          "key": null,
+          "source_row": 63
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 64
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 65
+        }
+      ]
+    },
+    "Part_File": {
+      "sheet": "제품 기본 정보",
+      "start_column": 22,
+      "columns": [
+        {
+          "name": "Part_File_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "Part_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "Part_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "Op_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "File_Name",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "File_Path",
+          "type": "Long Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "File_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "Doc_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "Doc_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 12
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 13
+        }
+      ]
+    },
+    "Tool_File": {
+      "sheet": "공구기준정보",
+      "start_column": 15,
+      "columns": [
+        {
+          "name": "Tool_File_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "공구번호",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "공구사양",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "File_Name",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "File_Path",
+          "type": "Long Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "File_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "Doc_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "Doc_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 12
+        }
+      ]
+    },
+    "Machine_File": {
+      "sheet": "설비기준정보",
+      "start_column": 43,
+      "columns": [
+        {
+          "name": "Machine_File_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "설비코드",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "번호",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "File_Name",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "File_Path",
+          "type": "Long Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "File_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "Doc_Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "Doc_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 11
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 12
+        }
+      ]
+    },
+    "Part_Spec": {
+      "sheet": "제품 기본 정보",
+      "start_column": 29,
+      "columns": [
+        {
+          "name": "Part_Spec_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "Part_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "Part_Rev",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "Op_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "Spec_No",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "Spec_Name",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "Spec_Description",
+          "type": "Long Text",
+          "key": null,
+          "source_row": 9
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 10
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 11
+        }
+      ]
+    },
+    "Machine_AvailableOP": {
+      "sheet": "설비기준정보",
+      "start_column": 36,
+      "columns": [
+        {
+          "name": "Machine_AvailableOP_SN",
+          "type": "SerialNo",
+          "key": "Yes",
+          "source_row": 3
+        },
+        {
+          "name": "설비코드",
+          "type": "Text",
+          "key": null,
+          "source_row": 4
+        },
+        {
+          "name": "번호",
+          "type": "Text",
+          "key": null,
+          "source_row": 5
+        },
+        {
+          "name": "공정명",
+          "type": "Text",
+          "key": null,
+          "source_row": 6
+        },
+        {
+          "name": "공정 Type",
+          "type": "Text",
+          "key": null,
+          "source_row": 7
+        },
+        {
+          "name": "Writer",
+          "type": "Text",
+          "key": null,
+          "source_row": 8
+        },
+        {
+          "name": "Write_Date",
+          "type": "Date",
+          "key": null,
+          "source_row": 9
+        }
+      ]
+    }
+  }
+}
