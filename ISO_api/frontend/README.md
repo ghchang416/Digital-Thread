@@ -41,6 +41,22 @@ semantic verification. Changed tool values, order or NC evidence require
 reconfirmation. Existing CAM bindings switch to manual management only with
 explicit consent. Conflicting common tool values require confirmed synchronization.
 
+Manual workingstep creation now has an unchecked authoring-placeholder option.
+With consent, the UI prepares the step and completes it before applying either
+result to the local workspace. Failure/cancellation leaves the original draft
+unchanged. Existing steps use the same manual-aware path from Missing Values.
+`POST /workplans/manual-complete` preserves entered values, reconciles missing
+standalone 13399/inline tool properties, records completion provenance, and clears
+affected NC reviews only when data changes. Conflicting dimensions are never
+resolved with placeholders. Unsupported required fields still appear as errors.
+The original completion endpoint and existing API schemas remain unchanged.
+
+NC reason checkboxes compose editable reason text only after user selection;
+they never acknowledge an NC review automatically. A separate final acknowledgement
+remains required. Disabled-button reasons list missing input, tool links, reason
+and acknowledgement. XML review highlights placeholders; ZIP reports retain the
+warnings. Placeholder XML is authoring-only, not machining-ready.
+
 Machine/material reference selection uses the backend schema profile. Missing
 required fields can be completed with explicit authoring placeholders; provenance
 and warnings remain available for review. These values are not machining advice.

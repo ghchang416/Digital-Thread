@@ -8,6 +8,7 @@ import { manualRecoveryError } from '../src/features/manual/model';
 import { emptyNcSession, ncSignature } from '../src/features/files/model';
 import { makeLocalFile } from '../src/features/cam/import';
 import type { Catalog, NodeRef } from '../src/shared/schema/types';
+import { manualNcBlockers, ncReasonChoices, toggleNcReason } from '../src/features/manual/nc-readiness';
 
 const fields = (names: string[]) => names.map(fieldName => ({ fieldName }));
 const catalog = { schemaHash: '0'.repeat(64), rulesVersion: 'test', types: {
@@ -16,6 +17,28 @@ const catalog = { schemaHash: '0'.repeat(64), rulesVersion: 'test', types: {
   DtCuttingTool13399: { fields: [] }, MachiningWorkingstep: { fields: [] },
 } } as unknown as Catalog;
 beforeEach(() => { globalThis.indexedDB = new IDBFactory(); });
+test('NC reason choices preserve custom text and require explicit acknowledgement', () => {
+  let reason = toggleNcReason('직접 기록한 확인 근거', ncReasonChoices[0], true);
+  assert.ok(reason.includes('직접 기록한 확인 근거'));
+  assert.equal(toggleNcReason(reason, ncReasonChoices[0], true), reason);
+  assert.equal(toggleNcReason(reason, ncReasonChoices[0], false), '직접 기록한 확인 근거');
+  const { data, wp } = fixture();
+  const session = { ...emptyNcSession(), manualReason: reason, manualRows: { step: { stepNodeId: 'step', toolTag: 'T1', lineStart: 1, lineEnd: 2 } } };
+  const state = { profileReady: true, busy: false, rawErrors: false, acknowledged: false };
+  assert.deepEqual(manualNcBlockers(data.draft, wp, session, state), ['마지막 확인 체크박스를 선택해 주세요.']);
+  assert.deepEqual(manualNcBlockers(data.draft, wp, session, { ...state, acknowledged: true }), []);
+  session.manualReason = '';
+  assert.ok(manualNcBlockers(data.draft, wp, session, { ...state, acknowledged: true }).some(s => s.includes('사유')));
+});
+test('NC disabled reasons identify missing tool, invalid range and input errors', () => {
+  const { data, wp } = fixture();
+  const session = { ...emptyNcSession(), manualReason: '확인', manualRows: { step: { stepNodeId: 'step', toolTag: 'bad', lineStart: 4, lineEnd: 2 } } };
+  data.draft.manualToolLinks = [];
+  const errors = manualNcBlockers(data.draft, wp, session, { profileReady: false, busy: false, rawErrors: true, acknowledged: true });
+  assert.ok(errors.some(s => s.includes('T 번호, 시작·끝 행, 공구 연결')));
+  assert.ok(errors.some(s => s.includes('숫자 형식')));
+  assert.ok(errors.some(s => s.includes('공구 입력 규칙')));
+});
 function fixture() {
   const data = initialWorkspace(catalog);
   const wp = (data.draft.nodes[data.draft.assets[0].elementNodeId].fields.main_workplan as NodeRef).$node;

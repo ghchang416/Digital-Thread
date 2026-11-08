@@ -25,7 +25,7 @@ def ref_id(value):
     return value.get("$node") if isinstance(value, dict) else None
 
 
-def complete_workplan(request):
+def complete_workplan(request, *, step_ids=None):
     catalog, classes = get_catalog(), model_classes()
     draft = request.draft.model_dump(by_alias=True)
     if draft["schemaHash"] != catalog["schemaHash"] or draft["rulesVersion"] != catalog["rulesVersion"]:
@@ -54,6 +54,10 @@ def complete_workplan(request):
     steps = [ref_id(ref) for ref in elements if nodes.get(ref_id(ref), {}).get("typeId") == "MachiningWorkingstep"]
     if not steps or len(steps) > 300 or len(set(steps)) != len(steps):
         raise CamInputError("직접 연결된 밀링 워킹스텝 1~300개를 선택해 주세요.")
+    if step_ids is not None:
+        if not step_ids or len(set(step_ids)) != len(step_ids) or not set(step_ids) <= set(steps):
+            raise CamInputError("현재 워크플랜의 보완 대상 워킹스텝을 확인해 주세요.")
+        steps = list(step_ids)
     original_ids = set(nodes)
     entries, skipped = [], []
 

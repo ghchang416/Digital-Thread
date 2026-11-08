@@ -53,7 +53,8 @@ export function ExportPanel({ data, openIssue }: { data: WorkspaceData; openIssu
         {!row.linked && <p className="source-note">등록된 자산 연결 없음 · XML 묶음에는 포함됩니다.</p>}
         {row.result?.issues.map((issue, index) => <button className="export-issue error-text" key={index} onClick={() => openIssue(issue.nodeId ?? row.asset.elementNodeId, issue.fieldName)}><span>{issue.fieldName}: {issue.message}</span><ArrowRight size={15} /></button>)}
         {!!row.result?.pendingStorage?.length && <p className="source-note">파일 저장 전 · value 생략 · 검토용 XML</p>}
-        {!!row.result?.warnings?.length && <details><summary>보완 이력 {row.result.warnings.length}개</summary>{row.result.warnings.map((issue, index) => <button className="export-issue" key={index} onClick={() => openIssue(issue.nodeId ?? row.asset.elementNodeId, issue.fieldName)}>{issue.message}<ArrowRight size={15} /></button>)}</details>}
+        {!!row.result?.warnings?.filter(issue => issue.code === 'AUTHORING_PLACEHOLDER').length && <p className="source-note">임시값 포함 · 실제 값 확인 필요 {row.result.warnings.filter(issue => issue.code === 'AUTHORING_PLACEHOLDER').length}개</p>}
+        {!!row.result?.warnings?.length && <details><summary>확인할 보완 이력 {row.result.warnings.length}개</summary>{row.result.warnings.map((issue, index) => <button className="export-issue" key={index} onClick={() => openIssue(issue.nodeId ?? row.asset.elementNodeId, issue.fieldName)}><span>{issue.fieldName && <strong>{issue.fieldName}: </strong>}{issue.message}</span><ArrowRight size={15} /></button>)}</details>}
         {artifactFor(row) && <details><summary>검토 XML</summary><pre>{artifactFor(row)!.xml}</pre><button className="secondary" onClick={() => downloadBlob(row.filename.split('/').at(-1)!, new Blob([artifactFor(row)!.xml], { type: 'application/xml' }))}><Download size={16} />XML 다운로드</button></details>}
       </article>)}</div>
     </>}

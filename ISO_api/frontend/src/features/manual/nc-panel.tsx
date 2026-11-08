@@ -6,6 +6,7 @@ import type { Draft, ManualAssignment } from '../../shared/schema/types';
 import type { LocalFile } from '../cam/types';
 import { directSteps, ncSignature } from '../files/model';
 import type { NcSession } from '../files/model';
+import { manualNcBlockers, ncReasonChoices, toggleNcReason } from './nc-readiness';
 
 export function ManualNcPanel({ draft, workplanId, files, session, hasRawErrors, onChange, onApply, openFiles }: {
   draft: Draft; workplanId: string; files: Record<string, LocalFile>; session: NcSession; hasRawErrors: boolean;
@@ -28,6 +29,7 @@ export function ManualNcPanel({ draft, workplanId, files, session, hasRawErrors,
   }, [file, session.encoding]);
   useEffect(() => setAck(false), [draft.revision, session.encoding, session.manualRows, session.manualReason]);
   const current = !!session.appliedSignature && session.appliedSignature === ncSignature(draft, workplanId, session);
+  const blockers = manualNcBlockers(draft, workplanId, session, { profileReady: !!profile.data, busy, rawErrors: hasRawErrors, acknowledged: ack });
   function change(next: NcSession) { setAck(false); onChange(next); }
   function row(id: string): ManualAssignment { return session.manualRows?.[id] ?? { stepNodeId: id, toolTag: '', lineStart: 0, lineEnd: 0 }; }
   async function analyze() {
@@ -64,9 +66,11 @@ export function ManualNcPanel({ draft, workplanId, files, session, hasRawErrors,
         const asset = draft.assets.find(a => a.assetNodeId === binding?.assetNodeId);
         return <div className="manual-nc-row" key={id}><div><strong>{index + 1}. {String(draft.nodes[id]?.fields.its_id || '이름 미입력')}</strong><small>{asset ? String(draft.nodes[asset.elementNodeId]?.fields.display_name || '공구') : '공구 연결 필요'}</small></div><label>T 번호<input aria-label={`${index + 1}번 T 번호`} value={value.toolTag} placeholder="T1" onChange={e => change({ ...session, manualRows: { ...session.manualRows, [id]: { ...value, toolTag: e.target.value } } })} /></label><label>시작 행<input type="number" min={1} step={1} aria-label={`${index + 1}번 시작 행`} value={value.lineStart || ''} onChange={e => change({ ...session, manualRows: { ...session.manualRows, [id]: { ...value, lineStart: Number(e.target.value) } } })} /></label><label>끝 행<input type="number" min={1} step={1} aria-label={`${index + 1}번 끝 행`} value={value.lineEnd || ''} onChange={e => change({ ...session, manualRows: { ...session.manualRows, [id]: { ...value, lineEnd: Number(e.target.value) } } })} /></label></div>;
       })}</div>
-      <label className="manual-reason">확인 근거·사유<textarea aria-label="NC 수동 확인 사유" maxLength={1000} value={session.manualReason ?? ''} onChange={e => change({ ...session, manualReason: e.target.value })} /></label>
+      <fieldset className="manual-reason-options"><legend>확인 근거 선택</legend>{ncReasonChoices.map(choice => <label className="checkbox-label" key={choice}><input type="checkbox" checked={(session.manualReason ?? '').split('\n').some(line => line.trim() === choice)} onChange={e => change({ ...session, manualReason: toggleNcReason(session.manualReason ?? '', choice, e.target.checked) })} />{choice}</label>)}</fieldset>
+      <label className="manual-reason">확인 근거·사유 (필수)<textarea aria-label="NC 수동 확인 사유" maxLength={1000} value={session.manualReason ?? ''} onChange={e => change({ ...session, manualReason: e.target.value })} /></label>
       <label className="checkbox-label"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />NC 원문과 작업 순서·T 번호·공구를 직접 확인했습니다. 자동 의미 검증은 아닙니다.</label>
-      <div className="manual-actions"><button className="primary" disabled={!profile.data || !ack || !steps.length || !session.manualReason?.trim() || steps.some(id => !row(id).toolTag || !row(id).lineStart || !row(id).lineEnd || !draft.manualToolLinks?.some(l => l.stepNodeId === id))} onClick={() => void confirm()}><Check size={16} />{busy ? '처리 중' : 'NC 수동 확인 적용'}</button></div>
+      <div className="manual-actions"><button className="primary" aria-describedby="manual-nc-blockers" disabled={blockers.length > 0} onClick={() => void confirm()}><Check size={16} />{busy ? '처리 중' : 'NC 수동 확인 적용'}</button></div>
+      <div id="manual-nc-blockers" aria-live="polite">{!current && blockers.length > 0 && <div className="manual-blockers"><strong>확인 전 남은 항목 {blockers.length}개</strong><ul>{blockers.map(message => <li key={message}>{message}</li>)}</ul></div>}</div>
     </fieldset>}
     {(error || profile.isError) && <p className="error-text" role="alert">{error || profile.error?.message}</p>}
   </section>;

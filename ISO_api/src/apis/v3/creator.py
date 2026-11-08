@@ -13,6 +13,8 @@ from src.services.creator.cam import CamInputError, MAX_FILE_BYTES, parse_cam
 from src.schemas.creator_nc import NcAnalyzeRequest, NcToolsRequest
 from src.services.creator.nc import analyze_nc, compile_tools
 from src.schemas.creator_completion import CompletionRequest
+from src.schemas.creator_manual_completion import ManualCompletionRequest
+from src.services.creator.manual_completion import complete_manual
 from src.services.creator.completion import complete_workplan
 from src.schemas.creator_manual import ManualToolRequest, ManualStepRequest, ManualNcRequest
 from src.services.creator.manual import manual_profile, prepare_tool, prepare_step, confirm_nc
@@ -68,6 +70,14 @@ def complete_missing(request: CompletionRequest):
         return complete_workplan(request)
     except CamInputError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/workplans/manual-complete")
+def complete_manual_missing(request: ManualCompletionRequest):
+    try:
+        return complete_manual(request)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(422, str(exc) if isinstance(exc, CamInputError) else "수동 보완 대상과 공구 연결을 확인해 주세요.") from exc
 
 
 async def nc_request(request, compile=False):

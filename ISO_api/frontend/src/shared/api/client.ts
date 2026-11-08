@@ -31,6 +31,16 @@ export const reviewAsset = (draft: Draft, assetNodeId: string, signal?: AbortSig
   body: JSON.stringify({ mode: 'partial', draft, targetAssetNodeIds: [assetNodeId] }),
 });
 
+export async function completeManualWorkplan(draft: Draft, workplanNodeId: string, includePlaceholders: boolean,
+  overrides: Record<string, string | number | boolean>, signal: AbortSignal, stepNodeIds?: string[]) {
+  const profile = await request<ToolProfile>('/manual/profile', { signal });
+  return request<{ draft: Draft; addedCount: number; skipped: { nodeId: string; message: string }[] }>('/workplans/manual-complete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ draft, workplanNodeId, includePlaceholders, overrides, mode: 'missing-only',
+      expectedRevision: draft.revision, profileHash: profile.hash, stepNodeIds }),
+  });
+}
+
 function ncRequest<T>(path: string, payload: object, file: LocalFile, signal: AbortSignal) {
   const form = new FormData(); form.append('payload', JSON.stringify(payload)); form.append(`file:${file.fileId}`, file.blob, file.name);
   return request<T>(path, { method: 'POST', body: form, signal });

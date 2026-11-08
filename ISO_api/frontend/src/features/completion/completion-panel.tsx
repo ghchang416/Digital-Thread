@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, CircleAlert, WandSparkles } from 'lucide-react';
 import type { Catalog, Draft } from '../../shared/schema/types';
 import { buildStructure } from '../../shared/draft/structure';
-import { completeWorkplan } from '../../shared/api/client';
+import { completeWorkplan, completeManualWorkplan } from '../../shared/api/client';
 import { completionLabels, formatValue, groupIssues, workplanSteps } from './model';
 import type { CompletionSettings } from './model';
 
@@ -55,7 +55,8 @@ export function CompletionPanel({ draft, catalog, workplanId, settings, onSettin
       const overrides: Record<string, string | number | boolean> = {};
       for (const [name, , enumType] of choices) if (settings.values[name]) overrides[name] = enumType ? settings.values[name] : settings.values[name] === 'true';
       for (const [name] of numbers) if (settings.values[name]?.trim() && (!name.endsWith('_z') || settings.includePlaceholders)) overrides[name] = Number(settings.values[name]);
-      const response = await completeWorkplan(draft, workplanId, settings.includePlaceholders, overrides, abort.signal);
+      const complete = draft.manualWorkplans?.includes(workplanId) ? completeManualWorkplan : completeWorkplan;
+      const response = await complete(draft, workplanId, settings.includePlaceholders, overrides, abort.signal);
       if (abort.signal.aborted) return;
       onApply(response.draft, draft.revision);
       setResult({ count: response.addedCount, skipped: response.skipped.length });
