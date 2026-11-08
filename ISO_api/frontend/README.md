@@ -1,5 +1,8 @@
 # DT Project Creator
 
+For the Korean development handoff, current ELS status, migration cautions and
+next implementation steps, start with [CREATOR_HANDOFF.md](../CREATOR_HANDOFF.md).
+
 Catalog-driven project, workplan, machine, material, file and cutting-tool
 authoring with shared operator/detail views, local recovery, CAM import,
 NC-only manual authoring and stateless XML generation/validation/download.
