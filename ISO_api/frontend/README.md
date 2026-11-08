@@ -112,6 +112,35 @@ creator router in src.main, with a request-body limit scoped to creator routes.
 
 ## Verification
 
+### Staged ELS Recovery Foundation
+
+ELS remains disabled in the running application. The opt-in storage modules in
+`src/features/els/workspace.ts` and `recovery.ts` now support version-2 records,
+candidate application, atomic active/previous snapshot swaps and Blob retention.
+They are not yet called by the editor or the autosave hook. Active ELS editing
+contracts, autosave coordination, source-selection UI and export integration are
+still required before enabling the feature. The existing v1 writer refuses ELS
+metadata and cannot silently downgrade a v2 active record.
+
+Tests use fake IndexedDB, never the user's browser. To include the cross-language
+contract check, generate a synthetic candidate fixture in the backend test
+environment (from `ISO_api`, with the output parent already present):
+
+```sh
+PYTHONPATH=.:test/creator python test/creator/export_els_recovery_fixture.py frontend/node_modules/els-recovery-fixture.json
+```
+
+Then from this frontend directory:
+
+```sh
+ELS_RECOVERY_FIXTURE=node_modules/els-recovery-fixture.json npm test
+```
+
+Without that environment variable, only the generated-fixture test is skipped.
+No backend DB write, platform upload or Access original modification is involved.
+
+### Existing Regression Suites
+
 Backend tests, from ISO_api in an environment with the backend dependencies and
 pytest installed:
 

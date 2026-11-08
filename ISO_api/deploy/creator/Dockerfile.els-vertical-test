@@ -1,0 +1,12 @@
+# Local cached images only; this image runs tests, never an API server.
+FROM dt-els-reader-test:local AS reader
+RUN cp -a /usr/lib/jvm/java-17-openjdk-* /test-jre
+
+FROM digital-thread-iso-api:latest
+COPY --from=reader /test-jre /opt/els/jre
+COPY --from=reader /etc/java-17-openjdk /etc/java-17-openjdk
+COPY --from=reader /opt/els/reader.jar /opt/els/reader.jar
+ENV PATH="/opt/els/jre/bin:${PATH}" ELS_READER_JAR=/opt/els/reader.jar ELS_REQUIRE_RUNTIME=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+ENTRYPOINT []
+CMD ["/opt/conda/envs/myenv/bin/python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test/creator/test_els_vertical.py"]

@@ -11,7 +11,7 @@ from src.services.creator.references import resolve_references
 from src.services.creator.completion_warnings import completion_warnings
 
 
-def preview_assets(draft: CreatorDraft, target_ids: list[str]):
+def preview_assets(draft: CreatorDraft, target_ids: list[str], *, reference_resolver=resolve_references):
     catalog = get_catalog()
     model, profile = get_model(), get_profile()
     issues, artifacts = [], []
@@ -26,7 +26,7 @@ def preview_assets(draft: CreatorDraft, target_ids: list[str]):
     if draft.schemaVersion != catalog["schemaVersion"] or draft.schemaHash != catalog["schemaHash"] or draft.rulesVersion != catalog["rulesVersion"]:
         issue(None, None, "SCHEMA_VERSION_MISMATCH", "스키마가 변경되었습니다. 새 초안에서 다시 확인해 주세요.")
         return {"valid": False, "finalizable": False, "issues": issues, "warnings": warnings, "artifacts": []}
-    draft, allowed_managed, link_diagnostics = resolve_references(draft, target_ids, allow_unstored_files=True)
+    draft, allowed_managed, link_diagnostics = reference_resolver(draft, target_ids, allow_unstored_files=True)
     warnings.extend(item for item in link_diagnostics if item["severity"] == "warning" and item["code"] != "FILE_STORAGE_PENDING")
     pending_storage = [item for item in link_diagnostics if item["code"] == "FILE_STORAGE_PENDING"]
     deferred_fields = {(item["nodeId"], item["fieldName"]) for item in pending_storage}

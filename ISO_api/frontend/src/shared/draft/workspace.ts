@@ -6,6 +6,7 @@ import type { CamImport, CamSession, LocalFile } from '../../features/cam/types'
 import type { NcSession } from '../../features/files/model';
 import type { CompletionSettings } from '../../features/completion/model';
 import { manualRecoveryError } from '../../features/manual/model';
+import { hasUnintegratedElsData } from '../../features/els/contracts';
 
 export interface WorkspaceData {
   screen?: 'operator' | 'detail' | 'export' | 'settings';
@@ -25,8 +26,10 @@ export function initialWorkspace(catalog: Catalog): WorkspaceData {
 export function validateRecovery(record: RecoveryRecord, catalog: Catalog): void {
   if (record?.formatVersion !== 1 || !Number.isSafeInteger(record.sequence) || record.sequence < 1 || !record.data?.draft) throw new Error('로컬 초안 형식을 확인할 수 없습니다. 기존 데이터는 보존했습니다.');
   const data = record.data;
+  if ('elsMetadata' in data || hasUnintegratedElsData(data)) throw new Error('ELS 초안은 호환 가능한 생성기에서 열어야 합니다. 기존 데이터는 보존했습니다.');
   if (data.screen !== undefined && !['operator', 'detail', 'export', 'settings'].includes(data.screen)) throw new Error('로컬 화면 상태가 올바르지 않습니다.');
   const draft = data.draft;
+  if (hasUnintegratedElsData(draft)) throw new Error('ELS 초안은 호환 가능한 생성기에서 열어야 합니다. 기존 데이터는 보존했습니다.');
   if (draft.schemaHash !== catalog.schemaHash || draft.rulesVersion !== catalog.rulesVersion || draft.draftVersion !== 1) throw new Error('로컬 초안의 스키마 버전이 현재 서버와 다릅니다. 기존 데이터는 보존했습니다.');
   if (!draft.nodes || !Array.isArray(draft.assets) || !draft.nodes[draft.projectAssetNodeId] || Object.keys(draft.nodes).length > 10000) throw new Error('로컬 초안의 자산 구조가 올바르지 않습니다.');
   const unsafe = new Set(['__proto__', 'constructor', 'prototype']);

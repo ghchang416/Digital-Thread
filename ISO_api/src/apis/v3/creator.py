@@ -18,8 +18,16 @@ from src.services.creator.manual_completion import complete_manual
 from src.services.creator.completion import complete_workplan
 from src.schemas.creator_manual import ManualToolRequest, ManualStepRequest, ManualNcRequest
 from src.services.creator.manual import manual_profile, prepare_tool, prepare_step, confirm_nc
+from src.apis.v3.creator_els import router as els_router
 
 router = APIRouter(prefix="/api/v3/creator", tags=["Project Creator"])
+router.include_router(els_router)
+
+
+@router.get("/els/capabilities")
+def els_capabilities():
+    from src.services.creator.els.capabilities import capabilities
+    return capabilities()
 
 
 @router.get("/manual/profile")

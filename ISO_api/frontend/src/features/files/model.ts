@@ -28,8 +28,9 @@ export function bindFile(draft: Draft, assetId: string, workplanId: string | nul
   if (workplanId && link.purpose === 'NC' && draft.fileLinks?.some(item => item.assetNodeId !== assetId && item.purpose === 'NC' && item.workplanNodeId === workplanId)) throw new Error('워크플랜에는 실행용 NC 파일을 하나만 배정할 수 있습니다.');
   return { ...draft, revision: draft.revision + 1, fileLinks: draft.fileLinks?.map(item => item.assetNodeId === assetId ? { ...item, workplanNodeId: workplanId } : item) };
 }
-export function ncSignature(draft: Draft, workplanId: string, session: NcSession): string {
+function signature(draft: Draft, workplanId: string, session: NcSession, scoped: boolean): string {
   const visited = new Set<string>();
+  const usedTools = new Set([...(draft.toolLinks ?? []), ...(draft.manualToolLinks ?? [])].filter(link => link.workplanNodeId === workplanId).map(link => link.assetNodeId));
   const stack = [...directSteps(draft, workplanId), ...(draft.toolLinks ?? []).filter(link => link.workplanNodeId === workplanId).map(link => link.assetNodeId), ...(draft.manualToolLinks ?? []).filter(link => link.workplanNodeId === workplanId).map(link => link.assetNodeId)];
   while (stack.length) {
     const id = stack.pop()!;
@@ -39,5 +40,21 @@ export function ncSignature(draft: Draft, workplanId: string, session: NcSession
   }
   return JSON.stringify({ elements: draft.nodes[workplanId]?.fields.its_elements, file: draft.fileLinks?.filter(link => link.workplanNodeId === workplanId && link.purpose === 'NC'),
     nodes: [...visited].sort().map(id => draft.nodes[id]), assignments: session.assignments, encoding: session.encoding,
-    ...(draft.manualWorkplans?.includes(workplanId) ? { manualLinks: draft.manualToolLinks?.filter(link => link.workplanNodeId === workplanId), manualRows: session.manualRows, manualReason: session.manualReason, manualTools: draft.manualTools } : {}) });
+    ...(draft.manualWorkplans?.includes(workplanId) ? { manualLinks: draft.manualToolLinks?.filter(link => link.workplanNodeId === workplanId), manualRows: session.manualRows, manualReason: session.manualReason,
+      manualTools: scoped ? draft.manualTools?.filter(tool => usedTools.has(tool.assetNodeId)) : draft.manualTools,
+      ...(scoped ? { signatureVersion: 2 } : {}) } : {}) });
+}
+
+export const ncSignature = (draft: Draft, workplanId: string, session: NcSession): string => signature(draft, workplanId, session, true);
+// Retain the previous algorithm only to verify an existing confirmation before migration.
+export const legacyNcSignature = (draft: Draft, workplanId: string, session: NcSession): string => signature(draft, workplanId, session, false);
+
+export function migrateNcSignatures(draft: Draft, sessions: Record<string, NcSession>): Record<string, NcSession> {
+  let next = sessions;
+  for (const [id, session] of Object.entries(sessions)) {
+    if (!draft.manualWorkplans?.includes(id) || !session.appliedSignature || session.appliedSignature !== legacyNcSignature(draft, id, session)) continue;
+    if (next === sessions) next = { ...sessions };
+    next[id] = { ...session, appliedSignature: ncSignature(draft, id, session) };
+  }
+  return next;
 }

@@ -1,0 +1,34 @@
+{
+  "version": "els-milling-1",
+  "schemaVersion": "v31",
+  "capability": "els-import-v1",
+  "status": "staged-vertical",
+  "limits": {"maxSteps": 300, "maxNodes": 10000, "maxDepth": 64, "maxExpansion": 10000, "maxDraftBytes": 1835008, "maxRequestBytes": 2097152},
+  "keys": {"part": ["Part_No", "Part_Rev"], "operation": ["Part_No", "Part_Rev", "Op_No"], "program": ["PGMNO", "REVNO"], "machine": ["설비코드", "설비번호"]},
+  "numericRules": [
+    {"id": "spindle", "table": "Operation_Machining", "columns": ["SPINDLE_01", "SPINDLE_02"], "targetType": "MillingTechnology", "targetField": "spindle", "sourceUnit": "rpm", "targetUnit": "1/s", "divisor": "60", "requiresSelection": false},
+    {"id": "feedrate", "table": "Operation_Machining", "columns": ["FEED_01", "FEED_02", "FEED_03", "FEED_04"], "targetType": "MillingTechnology", "targetField": "feedrate", "sourceUnit": "mm/min", "targetUnit": "m/s", "divisor": "60000", "requiresSelection": false},
+    {"id": "diameter", "table": "Operation_Machining", "columns": ["DIAMETER_SETPOINT", "VERICUT_DIAMETER"], "targetType": "MillingCuttingTool", "targetField": "effective_cutting_diameter", "sourceUnit": "mm", "targetUnit": "mm", "divisor": "1", "requiresSelection": true},
+    {"id": "corner-radius", "table": "Operation_Machining", "columns": ["CORNER_NOSE_RADIUS", "VERICUT_RADIUS"], "targetType": "MillingCuttingTool", "targetField": "edge_radius", "sourceUnit": "mm", "targetUnit": "mm", "divisor": "1", "requiresSelection": true}
+  ],
+  "defaults": [
+    {"typeId": "MillingTechnology", "field": "feedrate_reference", "value": "tcp", "kind": "default", "reason": "Authoring tool-centre reference; not a measured machine setting."},
+    {"typeId": "MillingTechnology", "field": "synchronize_spindle_with_feed", "value": false, "kind": "default", "reason": "Authoring assumption; confirm before machining."},
+    {"typeId": "MillingTechnology", "field": "inhibit_feedrate_override", "value": false, "kind": "default", "reason": "Authoring assumption; confirm before machining."},
+    {"typeId": "MillingTechnology", "field": "inhibit_spindle_override", "value": false, "kind": "default", "reason": "Authoring assumption; confirm before machining."},
+    {"typeId": "MillingCuttingTool", "field": "overall_assembly_length", "value": 1, "kind": "placeholder", "reason": "Temporary assembly length in mm; never inferred from stickout."},
+    {"typeId": "MillingCuttingTool", "field": "effective_cutting_diameter", "value": 1, "kind": "placeholder", "reason": "Temporary diameter in mm; not a verified cutting size."},
+    {"typeId": "MillingCuttingTool", "field": "maximum_depth_of_cut", "value": 1, "kind": "placeholder", "reason": "Temporary tool limit in mm; not AXIAL_DEPTH_MAX."},
+    {"typeId": "MachineTool", "field": "description", "value": "ELS machine - specification unverified", "kind": "placeholder", "reason": "Authoring description only."},
+    {"typeId": "Material", "field": "standard_identifier", "value": "UNSPECIFIED", "kind": "placeholder", "reason": "No verified material standard identifier."},
+    {"typeId": "Material", "field": "material_identifier", "value": "UNSPECIFIED", "kind": "placeholder", "reason": "No source material identifier selected."}
+  ],
+  "preserveOnlyColumns": ["SHANK_DIAMETER", "FLUTE_LENGTH_SETPOSITION", "VERICUT_FLUTE_LENGTH", "STICKOUT", "VERICUT_STICKOUT", "EXTSTICKOUT_W", "INSERT_01", "INSERT_02", "HOLDER_01", "HOLDER_02", "HOLDER_03", "HOLDER_04", "HOLDER_05", "SLIMCHUCK", "AXIAL_DEPTH_MAX"],
+  "toolIdentityColumns": ["DIAMETER_SETPOINT", "VERICUT_DIAMETER", "CORNER_NOSE_RADIUS", "VERICUT_RADIUS", "SHANK_DIAMETER", "FLUTE_LENGTH_SETPOSITION", "VERICUT_FLUTE_LENGTH", "STICKOUT", "VERICUT_STICKOUT", "EXTSTICKOUT_W", "INSERT_01", "INSERT_02", "HOLDER_01", "HOLDER_02", "HOLDER_03", "HOLDER_04", "HOLDER_05", "SLIMCHUCK", "STOCK_NUMBER"],
+  "coverage": [
+    {"types": ["FreeformOperation", "ToolpathFeature", "MillingCuttingTool"], "status": "verified-staged-vertical", "reason": "Representative authoring template with shared workpiece, 13399 synchronization and model XML roundtrip. No NC or machine safety verification; active UI application remains disabled."},
+    {"types": ["MachineTool", "Material", "NumericalValue", "Unit"], "status": "verified-staged-vertical", "reason": "Basic source mapping, explicit completion, reference validation and model XML roundtrip in a separate candidate; not detailed machine capability coverage."},
+    {"types": ["MachineToolSpecification", "MachineToolRequirements", "NcController", "SpindleCapability"], "status": "deferred", "reason": "Conditional children/axis/controller coverage not verified; do not generate automatically."},
+    {"types": ["Endmill", "Facemill", "TwistDrill", "Spotdrill", "PlaneRoughMilling", "PlaneFinishMilling", "BottomAndSideRoughMilling", "BottomAndSideFinishMilling", "Drilling", "CenterDrilling"], "status": "deferred", "reason": "Existing manual support is not ELS completion coverage."}
+  ]
+}

@@ -1,0 +1,20 @@
+FROM maven:3.9.9-eclipse-temurin-17 AS reader
+WORKDIR /build
+COPY deploy/creator/access-reader/pom.xml ./
+COPY deploy/creator/access-reader/src ./src
+RUN mvn -q -B package \
+    && java -cp target/test-classes:target/els-access-reader.jar re.digitalthread.els.GenerateFixtures /fixtures
+
+FROM python:3.10-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jre-headless mdbtools \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir pytest==8.3.5
+COPY --from=reader /build/target/els-access-reader.jar /opt/els/reader.jar
+COPY --from=reader /fixtures /fixtures
+ENV ELS_READER_JAR=/opt/els/reader.jar ELS_REQUIRE_RUNTIME=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+COPY src/services/creator/els ./src/services/creator/els
+COPY test/creator/test_els_reader.py ./test/creator/test_els_reader.py
+COPY test/creator/test_els_source_catalog.py ./test/creator/test_els_source_catalog.py
+COPY test/creator/test_els_session_reader.py ./test/creator/test_els_session_reader.py
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test/creator"]

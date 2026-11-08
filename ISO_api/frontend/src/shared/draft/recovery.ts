@@ -2,20 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { Catalog } from '../schema/types';
 import type { RecoveryRecord, WorkspaceData } from './workspace';
 import { validateRecovery } from './workspace';
-
-const DB_NAME = 'dt-project-creator';
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore('workspace');
-      request.result.createObjectStore('files');
-    };
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('다른 탭에서 로컬 저장소를 사용하고 있습니다. 다른 탭을 닫고 다시 시도해 주세요.'));
-    request.onsuccess = () => { request.result.onversionchange = () => request.result.close(); resolve(request.result); };
-  });
-}
+import { migrateNcSignatures } from '../../features/files/model';
+import { hasUnintegratedElsData } from '../../features/els/contracts';
+import { openRecoveryDatabase as openDatabase } from './recovery-database';
 
 export async function readRecovery(catalog: Catalog): Promise<RecoveryRecord | null> {
   const db = await openDatabase();
@@ -44,10 +33,15 @@ export async function readRecovery(catalog: Catalog): Promise<RecoveryRecord | n
       if (hash !== file.sha256) throw new Error('로컬 CAM 원본의 해시가 일치하지 않습니다. 기존 데이터는 보존했습니다.');
     }
   }
+  if (record?.data.ncSessions) {
+    const sessions = migrateNcSignatures(record.data.draft, record.data.ncSessions);
+    if (sessions !== record.data.ncSessions) return { ...record, data: { ...record.data, ncSessions: sessions } };
+  }
   return record;
 }
 
 export async function saveRecovery(data: WorkspaceData, expectedSequence: number, replaceFiles = false): Promise<RecoveryRecord> {
+  if ('elsMetadata' in data || hasUnintegratedElsData(data) || hasUnintegratedElsData(data.draft)) throw new Error('ELS 초안을 기존 복구 형식으로 저장할 수 없습니다. 기존 데이터는 보존했습니다.');
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['workspace', 'files'], 'readwrite');
@@ -59,8 +53,12 @@ export async function saveRecovery(data: WorkspaceData, expectedSequence: number
         failure = new Error('다른 탭에서 초안이 변경되어 자동 저장을 멈췄습니다. 이 탭의 필요한 내용을 내보낸 뒤 새로고침해 주세요.');
         tx.abort(); return;
       }
+      if (!replaceFiles && request.result && request.result.formatVersion !== 1) {
+        failure = new Error('새 형식의 초안을 기존 저장 방식으로 덮어쓸 수 없습니다. 기존 데이터는 보존했습니다.');
+        tx.abort(); return;
+      }
       // Graph and file references commit together; existing blobs need not be rewritten on every edit.
-      if (replaceFiles) tx.objectStore('files').clear();
+      if (replaceFiles) { tx.objectStore('files').clear(); tx.objectStore('workspace').delete('previous'); }
       const metadata = Object.fromEntries(Object.entries(data.files).map(([id, file]) => {
         const { blob, ...info } = file;
         const stored = tx.objectStore('files').getKey(id);

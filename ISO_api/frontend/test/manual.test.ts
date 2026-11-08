@@ -5,7 +5,7 @@ import { initialWorkspace } from '../src/shared/draft/workspace';
 import { applyCommand } from '../src/shared/draft/model';
 import { readRecovery, saveRecovery } from '../src/shared/draft/recovery';
 import { manualRecoveryError } from '../src/features/manual/model';
-import { emptyNcSession, ncSignature } from '../src/features/files/model';
+import { emptyNcSession, ncSignature, legacyNcSignature, migrateNcSignatures } from '../src/features/files/model';
 import { makeLocalFile } from '../src/features/cam/import';
 import type { Catalog, NodeRef } from '../src/shared/schema/types';
 import { manualNcBlockers, ncReasonChoices, toggleNcReason } from '../src/features/manual/nc-readiness';
@@ -85,4 +85,87 @@ test('damaged manual references are rejected without mutating records', () => {
   const { data } = fixture(); data.draft.manualToolLinks![0].assetNodeId = 'missing';
   const before = structuredClone(data);
   assert.ok(manualRecoveryError(data.draft)); assert.deepEqual(data, before);
+});
+
+test('NC signature ignores unused tool definitions but tracks a used definition', () => {
+  const { data, wp, aid } = fixture();
+  const session = emptyNcSession();
+  const signature = ncSignature(data.draft, wp, session);
+  data.draft = applyCommand(data.draft, { kind: 'asset', role: 'tool', typeId: 'DtCuttingTool13399' });
+  data.draft.manualTools!.push({ assetNodeId: data.draft.assets.at(-1)!.assetNodeId, toolTypeId: 'Endmill' });
+  assert.equal(ncSignature(data.draft, wp, session), signature);
+  data.draft.manualTools!.find(tool => tool.assetNodeId === aid)!.toolTypeId = 'Endmill';
+  assert.notEqual(ncSignature(data.draft, wp, session), signature);
+});
+
+test('only a valid old signature migrates, without changing the draft or source session', () => {
+  const { data, wp } = fixture();
+  const session = emptyNcSession();
+  session.appliedSignature = legacyNcSignature(data.draft, wp, session);
+  const original = structuredClone({ draft: data.draft, session });
+  const sessions = { [wp]: session };
+  const migrated = migrateNcSignatures(data.draft, sessions);
+  assert.notEqual(migrated, sessions);
+  assert.equal(migrated[wp].appliedSignature, ncSignature(data.draft, wp, session));
+  assert.deepEqual({ draft: data.draft, session }, original);
+  assert.equal(migrateNcSignatures(data.draft, migrated), migrated);
+});
+
+for (const change of ['reason', 'tool', 'file', 'order', 'encoding', 'unused-tool']) {
+  test(`stale legacy NC signature is never renewed after changing ${change}`, () => {
+    const { data, wp } = fixture();
+    const session = emptyNcSession();
+    session.appliedSignature = legacyNcSignature(data.draft, wp, session);
+    if (change === 'reason') session.manualReason = 'Changed';
+    if (change === 'tool') data.draft.manualTools![0].toolTypeId = 'Endmill';
+    if (change === 'file') data.draft.fileLinks = [{ assetNodeId: 'nc', fileId: 'original', sha256: 'a'.repeat(64), purpose: 'NC', workplanNodeId: wp }];
+    if (change === 'order') data.draft.nodes[wp].fields.its_elements = [];
+    if (change === 'encoding') session.encoding = 'cp949';
+    if (change === 'unused-tool') data.draft.manualTools!.push({ assetNodeId: 'unused', toolTypeId: 'Endmill' });
+    const sessions = { [wp]: session };
+    assert.equal(migrateNcSignatures(data.draft, sessions), sessions);
+    assert.notEqual(session.appliedSignature, ncSignature(data.draft, wp, session));
+  });
+}
+
+test('CAM signatures and unconfirmed sessions are not migrated', () => {
+  const { data, wp } = fixture();
+  data.draft.manualWorkplans = [];
+  const session = emptyNcSession();
+  assert.equal(ncSignature(data.draft, wp, session), legacyNcSignature(data.draft, wp, session));
+  session.appliedSignature = legacyNcSignature(data.draft, wp, session);
+  const sessions = { [wp]: session };
+  assert.equal(migrateNcSignatures(data.draft, sessions), sessions);
+  data.draft.manualWorkplans = [wp];
+  delete session.appliedSignature;
+  assert.equal(migrateNcSignatures(data.draft, sessions), sessions);
+});
+
+test('recovery migrates a valid old confirmation after validating files and preserves v1 data', async () => {
+  const { data, wp } = fixture();
+  const file = await makeLocalFile(new Blob(['T1 M6']), 'before.nc');
+  data.files[file.fileId] = file;
+  data.rawInputs['step:its_id:'] = 'unfinished';
+  const session = emptyNcSession();
+  session.appliedSignature = legacyNcSignature(data.draft, wp, session);
+  data.ncSessions = { [wp]: session };
+  await saveRecovery(data, 0);
+  const restored = (await readRecovery(catalog))!;
+  assert.equal(restored.sequence, 1);
+  assert.equal(restored.formatVersion, 1);
+  assert.deepEqual(restored.data.draft, data.draft);
+  assert.deepEqual(restored.data.rawInputs, data.rawInputs);
+  assert.equal(await restored.data.files[file.fileId].blob.text(), 'T1 M6');
+  assert.equal(restored.data.ncSessions![wp].appliedSignature, ncSignature(data.draft, wp, session));
+  assert.notEqual(session.appliedSignature, restored.data.ncSessions![wp].appliedSignature);
+});
+
+test('ELS metadata cannot be saved through the legacy recovery writer', async () => {
+  const { data } = fixture();
+  await saveRecovery(data, 0);
+  const candidate = structuredClone(data);
+  Object.assign(candidate.draft, { elsImports: [{ importEntryId: 'unverified' }] });
+  await assert.rejects(saveRecovery(candidate, 1), /ELS/);
+  assert.equal((await readRecovery(catalog))!.sequence, 1);
+  assert.deepEqual((await readRecovery(catalog))!.data.draft, data.draft);
 });
